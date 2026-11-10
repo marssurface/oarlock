@@ -221,9 +221,18 @@ test('fork copies a message prefix into a fresh session without the trace', () =
   session.append({ role: 'user', content: 'second question' })
   session.recordTrace({ type: 'turn-start', input: 'first question' })
 
+  const sourceCreatedAt = session.meta.createdAt
+  const forkStartedAt = Date.now()
   const branch = store.fork(session.id, 2)
   assert.notEqual(branch.id, session.id)
-  assert.equal(branch.meta.createdAt === session.meta.createdAt, false)
+  // `createdAt` has millisecond resolution, so on a fast runner the create and the
+  // fork legitimately land in the same millisecond. Assert the branch carries its
+  // own stamp instead of demanding the two strings differ.
+  assert.ok(
+    new Date(branch.meta.createdAt).getTime() >= forkStartedAt,
+    'a branch stamps its own creation time rather than inheriting the source',
+  )
+  assert.equal(session.meta.createdAt, sourceCreatedAt, 'forking must not rewrite the source meta')
   assert.equal(branch.meta.title, 'first question · 分支')
   assert.deepEqual(branch.messages.map((message) => message.role), ['user', 'assistant'])
   assert.equal(branch.messages[0]?.content, 'first question')
