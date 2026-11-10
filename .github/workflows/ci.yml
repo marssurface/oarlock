@@ -44,7 +44,24 @@ jobs:
         run: pnpm typecheck
 
       - name: Unit tests
-        run: pnpm test
+        shell: bash
+        run: |
+          # Same command as `pnpm test`, but the failing test names are echoed as
+          # annotations: they show up on the run page and in the public check-run
+          # API, so a red CI is diagnosable without admin rights on the log.
+          status=0
+          node --test --test-reporter=spec test/*.test.ts > /tmp/unit-tests.log 2>&1 || status=$?
+          cat /tmp/unit-tests.log
+          if [ "$status" -ne 0 ]; then
+            details=$(awk '/failing tests:/{flag=1} flag' /tmp/unit-tests.log | head -80)
+            if [ -z "$details" ]; then
+              details=$(grep -E "^(not ok|# fail|# tests|✖)" /tmp/unit-tests.log | head -80)
+            fi
+            printf '%s\n' "$details" | sed 's/%/%25/g' | while IFS= read -r line; do
+              printf '::error::%s\n' "$line"
+            done
+          fi
+          exit "$status"
 
       - name: Build the distributable
         run: pnpm build
