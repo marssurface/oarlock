@@ -1,0 +1,35 @@
+{
+  "name": "dock-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A small agent runtime written from scratch: provider adapters, the agent loop, tools, context compaction, sessions, approvals, subagents and a web UI.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "node src/cli.ts",
+    "start": "node src/cli.ts",
+    "web": "node src/web/server.ts",
+    "test": "node --test test/*.test.ts",
+    "bench": "node bench/run.ts",
+    "typecheck": "tsc --noEmit",
+    "bench:replay": "node bench/run.ts --replay",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
+    "prepack": "pnpm build"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^30.0.0",
+    "@types/node": "^22.20.5",
+    "jsdom": "^30.1.3",
+    "typescript": "^5.9.3"
+  },
+  "bin": {
+    "dock-agent": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    ".env.example"
+  ]
+}

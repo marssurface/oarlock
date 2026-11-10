@@ -1,0 +1,64 @@
+name: CI
+
+# Runs on every push and pull request. The project is self-contained, so the
+# workflow assumes this directory is the repository root. If the repository
+# root is a parent folder instead, move `.github/` up one level and set
+# `defaults.run.working-directory: agent`.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: typecheck · test · bench
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      # Node 24 runs the TypeScript sources directly (type stripping), which is
+      # exactly how the CLI and the bench run locally.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Build the distributable
+        run: pnpm build
+
+      - name: Bench — scripted runtime baseline
+        run: pnpm bench
+
+      - name: Bench — recorded model streams
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(bench/transcripts/*.json)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::notice::no recorded transcripts yet — skipping replay"
+            exit 0
+          fi
+          node bench/run.ts --replay
