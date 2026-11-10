@@ -1,5 +1,5 @@
 {
-  "name": "dock-agent",
+  "name": "oarlock",
   "version": "0.1.0",
   "private": true,
   "description": "A small agent runtime written from scratch: provider adapters, the agent loop, tools, context compaction, sessions, approvals, subagents and a web UI.",
@@ -25,7 +25,7 @@
     "typescript": "^5.9.3"
   },
   "bin": {
-    "dock-agent": "./dist/cli.js"
+    "oarlock": "./dist/cli.js"
   },
   "files": [
     "dist",

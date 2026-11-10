@@ -133,9 +133,9 @@ function parseArgs(argv: string[]): CliArgs {
 function printHelp(): void {
   output.write(
     [
-      'dock-agent — a small coding agent you can read end to end',
+      'oarlock — a general-purpose agent runtime you can read end to end',
       '',
-      'Usage: dock-agent [options]        # dev: node src/cli.ts [options]',
+      'Usage: oarlock [options]           # dev: node src/cli.ts [options]',
       '',
       '  --provider <deepseek|openai|ollama|mock>  model backend (env AGENT_PROVIDER)',
       '  --model <name>                            model name',
@@ -488,7 +488,7 @@ async function main(): Promise<void> {
 
   let runtime: Runtime = createRuntime(config, session, { approval: gate, ask: askGate, onEvent: renderer.render, extraTools: mcp.tools })
 
-  output.write(`${color(1, 'dock-agent')} ${color(90, describeConfig(config))}\n`)
+  output.write(`${color(1, 'oarlock')} ${color(90, describeConfig(config))}\n`)
   output.write(color(90, `cwd ${config.cwd} · session ${session.id} · /help 查看命令\n\n`))
 
   if (args.once !== undefined) {

@@ -93,7 +93,7 @@ export class McpClient {
     await this.request('initialize', {
       protocolVersion: PROTOCOL_VERSION,
       capabilities: {},
-      clientInfo: { name: 'dock-agent', version: '0.1.0' },
+      clientInfo: { name: 'oarlock', version: '0.1.0' },
     })
     this.notify('notifications/initialized', {})
   }

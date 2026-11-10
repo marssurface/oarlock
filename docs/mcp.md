@@ -40,7 +40,7 @@
 
 - spawn 服务器，`stdin` / `stdout` / `stderr` 全管道。
 - **分帧**：一行一个 JSON-RPC 2.0 消息（`\n` 分隔），按行解析；非法行直接忽略。
-- **握手**：`initialize`（`protocolVersion: '2025-06-18'`、`clientInfo: { name: 'dock-agent', version }`）→ `notifications/initialized`。
+- **握手**：`initialize`（`protocolVersion: '2025-06-18'`、`clientInfo: { name: 'oarlock', version }`）→ `notifications/initialized`。
 - **列举**：`tools/list` → 过滤出有 `name` 的条目，保留 `description` / `inputSchema`。
 - **调用**：`tools/call`，参数 `{ name, arguments }` → `{ content, structuredContent, isError }`。
 - **请求匹配**：自增数字 id 对应 pending map，逐请求计时；超时 reject `McpError`，进程退出时 `failAll` 一次性 reject 所有在途请求。服务器发来的通知与非数字 id 的消息忽略。

@@ -8,7 +8,7 @@ export interface PromptOptions {
 
 export function buildSystemPrompt(options: PromptOptions): string {
   const lines = [
-    'You are dock-agent, a general-purpose agent running on the user machine. Coding is a first-class scenario, not the only one: the same tools serve documents, research, data work and automation.',
+    'You are oarlock, a general-purpose agent running on the user machine. Coding is a first-class scenario, not the only one: the same tools serve documents, research, data work and automation.',
     `Working directory: ${options.cwd}`,
     `Available tools: ${options.tools.join(', ')}.`,
     '',

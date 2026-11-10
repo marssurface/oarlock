@@ -765,7 +765,7 @@ if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
     })
     const { server } = createAgentServer(config, mcp.tools.length > 0 ? { extraTools: mcp.tools } : {})
     server.listen(parsed.port, parsed.host, () => {
-      process.stdout.write(`dock-agent web: http://${parsed.host}:${parsed.port}\n`)
+      process.stdout.write(`oarlock web: http://${parsed.host}:${parsed.port}\n`)
       process.stdout.write(`${describeConfig(config)}\n`)
       if (mcp.servers.length > 0) process.stdout.write(`MCP: ${mcp.servers.join(', ')}\n`)
     })

@@ -236,7 +236,7 @@ function summaryMessage(summary: string): ChatMessage {
 }
 
 const INTERRUPTED_TOOL_RESULT =
-  '[dock-agent] This tool call was interrupted before it returned a result (the process stopped or the turn was aborted). Treat the action as not completed.'
+  '[oarlock] This tool call was interrupted before it returned a result (the process stopped or the turn was aborted). Treat the action as not completed.'
 
 /**
  * Close a torn turn: an assistant message can survive a crash while its tool

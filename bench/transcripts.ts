@@ -153,7 +153,7 @@ export class RecordingProvider implements ChatProvider {
 export function loadTranscript(file: string): Transcript {
   const parsed = JSON.parse(readFileSync(file, 'utf8')) as Transcript
   if (parsed === null || typeof parsed !== 'object' || parsed.version !== 1 || !Array.isArray(parsed.streams)) {
-    throw new Error(`not a dock-agent transcript: ${file}`)
+    throw new Error(`not an oarlock transcript: ${file}`)
   }
   return parsed
 }

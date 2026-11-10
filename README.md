@@ -1,6 +1,6 @@
-# dock-agent
+# oarlock
 
-一个从零手写的 agent 项目：模型适配层、Agent 循环、工具调用、上下文压缩、会话持久化与分支管理、权限审批、子 agent、工具钩子、MCP、图片输入与成本核算，外加终端 CLI 和一个本地 Web 界面。运行时零第三方依赖，只用 Node 标准库。
+一个从零手写的 agent 项目：模型适配层、Agent 循环、工具调用、上下文压缩、会话持久化与分支管理、权限审批、子 agent、工具钩子、MCP、图片输入与成本核算，外加终端 CLI 和一个本地 Web 界面。运行时零第三方依赖，只用 Node 标准库。名字取自桨栓——桨架上那个供桨转动吃水的支点：模型负责出力，runtime 负责把力气传下去。
 
 定位是**通用 agent runtime**，不是编码工具的复刻。文件、命令、子 agent、审批、MCP 这些能力面向任何任务——写周报、整理资料、跑一段数据处理、检索外部系统，和改代码走的是同一条循环。编码只是被用得最多、也因此打磨得最细的一类场景，所以文档里会拿 Claude Code / Codex CLI / Cursor 做参照：量的是运行时完成度的差距，不是要把项目改成它们的形态。
 
@@ -327,11 +327,11 @@ git add bench/transcripts && git commit -m "record model baseline"
 
 ```bash
 pnpm build                 # -> dist/
-npm pack                   # -> dock-agent-0.1.0.tgz
-npx ./dock-agent-0.1.0.tgz --help
+npm pack                   # -> oarlock-0.1.0.tgz
+npx ./oarlock-0.1.0.tgz --help
 
-npm i -g ./dock-agent-0.1.0.tgz
-dock-agent                 # 已安装的命令
+npm i -g ./oarlock-0.1.0.tgz
+oarlock                     # 已安装的命令
 ```
 
 要发布到 npm，去掉 `package.json` 里的 `"private": true` 再 `npm publish`。
@@ -339,14 +339,14 @@ dock-agent                 # 已安装的命令
 Docker 用多阶段构建，运行镜像里只有 `dist/` 和 `package.json`（约 230MB，基于 `node:24-slim`，保留 bash）：
 
 ```bash
-docker build -t dock-agent .
+docker build -t oarlock .
 
 # 交互式 CLI / 单轮，挂载工作目录
-docker run --rm -it -v "$PWD:/work" -w /work dock-agent
-docker run --rm -v "$PWD:/work" -w /work dock-agent --once "解释这个仓库"
+docker run --rm -it -v "$PWD:/work" -w /work oarlock
+docker run --rm -v "$PWD:/work" -w /work oarlock --once "解释这个仓库"
 
 # Web UI
-docker run --rm -p 4173:4173 --entrypoint node dock-agent \
+docker run --rm -p 4173:4173 --entrypoint node oarlock \
   /app/dist/web/server.js --host 0.0.0.0 --port 4173
 ```
 

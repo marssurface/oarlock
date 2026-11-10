@@ -1,5 +1,5 @@
 /**
- * dock-agent — a small agent runtime written from scratch.
+ * oarlock — a small agent runtime written from scratch.
  *
  * Layers, bottom-up:
  *   providers/  model adapters (OpenAI-compatible, mock)

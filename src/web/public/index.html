@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>dock-agent</title>
+    <title>oarlock</title>
     <script>
       ;(() => {
         const saved = localStorage.getItem('dock-theme')
@@ -1044,7 +1044,7 @@
   <body>
     <div id="app">
       <aside>
-        <div class="brand"><span class="mark">›</span><span>dock-agent</span></div>
+        <div class="brand"><span class="mark">›</span><span>oarlock</span></div>
         <button class="new-btn" id="new">+ 新会话</button>
         <div id="sessions"></div>
         <div class="side-foot">
@@ -1501,7 +1501,7 @@
           const url = URL.createObjectURL(blob)
           const link = document.createElement('a')
           link.href = url
-          link.download = `dock-agent-answer-${messageHash(text)}.md`
+          link.download = `oarlock-answer-${messageHash(text)}.md`
           link.click()
           URL.revokeObjectURL(url)
           closeMessageMenu()
@@ -4048,7 +4048,7 @@
         const url = URL.createObjectURL(new Blob([payload], { type: 'application/json' }))
         const link = document.createElement('a')
         link.href = url
-        link.download = `dock-agent-trace-${state.sessionId}.json`
+        link.download = `oarlock-trace-${state.sessionId}.json`
         link.click()
         URL.revokeObjectURL(url)
       })
@@ -4984,7 +4984,7 @@
           else if (state.sessions.length > 0) await openSession(state.sessions[0].id)
           else await newSession()
         } catch (error) {
-          addNote(`无法连接 dock-agent 服务：${error.message}`, 'error')
+          addNote(`无法连接 oarlock 服务：${error.message}`, 'error')
         }
       })()
     </script>

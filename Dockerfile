@@ -21,8 +21,8 @@ COPY .env.example ./
 EXPOSE 4173
 
 # Default: the terminal agent, with extra docker arguments forwarded to it:
-#   docker run --rm -it dock-agent
-#   docker run --rm dock-agent --once "explain this repo"
+#   docker run --rm -it oarlock
+#   docker run --rm oarlock --once "explain this repo"
 # Web UI (overrides the entrypoint):
-#   docker run --rm -p 4173:4173 --entrypoint node dock-agent /app/dist/web/server.js --host 0.0.0.0 --port 4173
+#   docker run --rm -p 4173:4173 --entrypoint node oarlock /app/dist/web/server.js --host 0.0.0.0 --port 4173
 ENTRYPOINT ["node", "/app/dist/cli.js"]

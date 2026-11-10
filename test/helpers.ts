@@ -6,7 +6,7 @@ import type { MockScript } from '../src/providers/mock.ts'
 import type { ProviderEvent } from '../src/providers/types.ts'
 import type { AgentEvent } from '../src/core/events.ts'
 
-export function tempDir(prefix = 'dock-agent-test-'): string {
+export function tempDir(prefix = 'oarlock-test-'): string {
   return mkdtempSync(join(tmpdir(), prefix))
 }
 

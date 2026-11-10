@@ -1,6 +1,6 @@
 # P3 路线图：与业界先进 agent 的差距
 
-参照系：Claude Code / Codex CLI / Cursor 这一档。对标只为量差距，不改定位——dock-agent 是**通用 agent runtime**，编码是一等场景而非唯一场景（见 README 开头）。P0–P2 完成后（见 [harness-gaps.md](./harness-gaps.md)），dock-agent 的功能骨架已齐——循环、审批、钩子、MCP、子 agent、会话分支、成本、轨迹、重试、rg 检索、运行时录制都有。差距集中在**深度与可靠性**，不在功能有无。
+参照系：Claude Code / Codex CLI / Cursor 这一档。对标只为量差距，不改定位——oarlock 是**通用 agent runtime**，编码是一等场景而非唯一场景（见 README 开头）。P0–P2 完成后（见 [harness-gaps.md](./harness-gaps.md)），oarlock 的功能骨架已齐——循环、审批、钩子、MCP、子 agent、会话分支、成本、轨迹、重试、rg 检索、运行时录制都有。差距集中在**深度与可靠性**，不在功能有无。
 
 ## 差距清单
 

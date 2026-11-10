@@ -22,14 +22,14 @@ export const compaction: BenchTask = {
     { role: 'assistant', content: `收到：${'只做只读分析。'.repeat(30)}` },
   ],
   setup(dir) {
-    fixture(dir, { 'README.md': 'dock-agent fixture\nsecond line\n' })
+    fixture(dir, { 'README.md': 'oarlock fixture\nsecond line\n' })
   },
   script(request) {
     const system = textOf(request.messages[0]?.content ?? '')
     if (system.includes('compress an agent conversation')) return [say('SUMMARY: 用户要求只读分析并能简洁回答。'), done('stop')]
     const results = request.messages.filter((message) => message.role === 'tool').length
     if (results === 0) return [call('c1', 'read_file', { path: 'README.md' }), done('tool_calls')]
-    return [say('第一行是 dock-agent fixture。'), done('stop')]
+    return [say('第一行是 oarlock fixture。'), done('stop')]
   },
   verify(ctx) {
     assert.ok(

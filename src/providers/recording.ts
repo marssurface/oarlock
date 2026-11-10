@@ -59,7 +59,7 @@ export class DebugRecordingProvider implements ChatProvider {
     this.dir = dir
     if (!announced) {
       announced = true
-      process.stderr.write(`[dock-agent] 模型调用录制已开启 → ${dir}\n`)
+      process.stderr.write(`[oarlock] 模型调用录制已开启 → ${dir}\n`)
     }
   }
 
@@ -98,7 +98,7 @@ export class DebugRecordingProvider implements ChatProvider {
         // Debug dumps must never break a turn; say so once, then stay quiet.
         if (!writeWarned) {
           writeWarned = true
-          process.stderr.write(`[dock-agent] 录制写盘失败（不影响对话）：${(error as Error).message}\n`)
+          process.stderr.write(`[oarlock] 录制写盘失败（不影响对话）：${(error as Error).message}\n`)
         }
       }
     }

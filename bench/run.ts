@@ -92,7 +92,7 @@ function parseArgs(argv: string[]): Args {
 function printHelp(): void {
   process.stdout.write(
     [
-      'dock-agent bench — run the task suite and score it',
+      'oarlock bench — run the task suite and score it',
       '',
       'Usage: node bench/run.ts [options]',
       '',
@@ -304,7 +304,7 @@ async function main(): Promise<void> {
       : `live ${modelLabel}`
 
   if (!args.json) {
-    process.stdout.write(`\ndock-agent bench · ${modeLabel}\n`)
+    process.stdout.write(`\noarlock bench · ${modeLabel}\n`)
     if (live === undefined && !args.replay) {
       process.stdout.write(color(90, '  脚本模型只验证运行时；接真模型请加 --provider deepseek\n'))
     }
