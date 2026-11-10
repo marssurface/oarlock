@@ -14,6 +14,7 @@
 
 | 操作 | 行为 |
 | --- | --- |
+| `SessionStore.list()` | 按 `updatedAt`（取转录文件的 mtime）倒序返回会话摘要。同一毫秒内写入的两个会话比较结果相等，此时按 `id` 倒序兜底——`id` 前缀是创建时刻的 base36，所以「新的在前」的读法不变；没有这个兜底，顺序会落到 `readdir` 返回序（Linux 是目录 hash 序，macOS 是创建序），侧栏会在换平台或换次启动时莫名抖动。 |
 | `SessionStore.rename(id, title)` | 读取转录，更新 `meta.title` 后原子重写（临时文件 + rename）。重写后恢复原 mtime，**列表排序不会因改名跳到顶部**。`title` 为空/缺省会删除字段，列表重新用首条用户消息生成预览标题。 |
 | `SessionStore.remove(id)` | 删除 `<id>.jsonl` 与 `<id>.events.jsonl`，并清理轨迹汇总缓存。未知 id 抛 `ENOENT`，由 HTTP 层映射为 404。 |
 | `SessionStore.fork(id, keep?)` | 复制源会话前 `keep` 条消息到新 id；省略 `keep` 复制全部，`0` 生成空分支。新 `createdAt`、标题为「源标题 · 分支」。复制前会复用断尾修复（assistant 工具调用缺结果时补合成结果），保证新转录可以直接继续对话。轨迹不复制。 |

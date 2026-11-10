@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync, statSync, utimesSync } from 'node:fs'
+import { join } from 'node:path'
 import test from 'node:test'
 import { SessionStore } from '../src/session/store.ts'
 import { textOf } from '../src/providers/content.ts'
@@ -210,6 +211,33 @@ test('rename persists a title, clears back to the preview and keeps the listing 
   store.rename(session.id, undefined)
   assert.equal(store.open(session.id).meta.title, undefined)
   assert.equal(store.list()[0]?.title, 'hello there', 'an explicit title can be cleared')
+})
+
+test('a timestamp tie in list() breaks by id instead of readdir order', () => {
+  const dir = tempDir()
+  const store = new SessionStore(dir)
+  const first = store.create({ cwd: dir, provider: 'mock', model: 'mock-1' })
+  const second = store.create({ cwd: dir, provider: 'mock', model: 'mock-2' })
+
+  // `updatedAt` comes from the file mtime, so pinning both to the same instant makes
+  // the comparison equal — exactly what happens to two sessions written within one
+  // millisecond. The order must then be decided by id, not by directory read order.
+  const stamp = new Date(1_700_000_000_000)
+  for (const session of [first, second]) {
+    utimesSync(join(dir, `${session.id}.jsonl`), stamp, stamp)
+  }
+
+  const expected = [first.id, second.id].sort((left, right) => right.localeCompare(left))
+  assert.deepEqual(
+    store.list().map((summary) => summary.id),
+    expected,
+    'sessions with the same updatedAt list newest id first',
+  )
+  assert.deepEqual(
+    store.list().map((summary) => summary.id),
+    expected,
+    'the order is stable across reads',
+  )
 })
 
 test('fork copies a message prefix into a fresh session without the trace', () => {

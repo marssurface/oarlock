@@ -508,6 +508,13 @@ export class SessionStore {
         usage,
       })
     }
-    return summaries.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    // Two sessions written within the same millisecond compare equal on `updatedAt`.
+    // Without a tie-break the sort is decided by readdir order, which is directory hash
+    // order on Linux and creation order on macOS — so the sidebar would shuffle between
+    // platforms and runs. The id embeds the creation time, so descending id keeps the
+    // newest-first reading.
+    return summaries.sort(
+      (left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id),
+    )
   }
 }
