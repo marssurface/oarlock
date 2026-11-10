@@ -10,13 +10,14 @@ import { ASK_TOOL_NAME, formatAskAnswer, parseAskArgs } from '../tools/ask.ts'
 import { TASK_TOOL_NAME } from '../tools/task.ts'
 import { TODO_TOOL_NAME, formatTodoList, parseTodoArgs } from '../tools/todo.ts'
 import type { TodoItem } from '../tools/todo.ts'
+import { MEMORY_TOOL_NAME } from '../tools/memory.ts'
 import { ContextManager, estimateTokens } from './context.ts'
 import { describeToolChange } from './diff.ts'
 import { Semaphore } from './semaphore.ts'
 import { costOf } from './pricing.ts'
 import type { ModelPricing } from './pricing.ts'
 import { addUsage, estimatedUsage, hasUsage, normalizeUsage, totalTokens } from './usage.ts'
-import { buildSystemPrompt } from './prompt.ts'
+import { buildSystemPrompt, memorySection } from './prompt.ts'
 import { findPreset } from './subagents.ts'
 import { emptyHooks, runHooks } from './hooks.ts'
 import type { HookOutcome, HooksConfig } from './hooks.ts'
@@ -78,6 +79,11 @@ export interface AgentOptions {
   maxDepth?: number
   systemPrompt?: string
   extraInstructions?: string
+  /**
+   * Renders the cross-session memory index (see core/memory.ts). Re-read at the
+   * start of every turn, so a note saved in this turn shows up in the next one.
+   */
+  memoryIndex?: () => string | undefined
   persistence?: AgentPersistence
   /** Snapshot the workspace before each turn; main agent only, never subagents. */
   checkpoint?: CheckpointHook
@@ -181,6 +187,8 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, signal?: AbortSi
 }
 
 function summarizeCall(tool: ToolDefinition, args: Record<string, unknown>): string {
+  const declared = tool.summaryFor?.(args)
+  if (declared !== undefined && declared.trim() !== '') return declared.trim().slice(0, 160)
   const command = typeof args['command'] === 'string' ? args['command'] : undefined
   const path = typeof args['path'] === 'string' ? args['path'] : undefined
   if (tool.name === 'bash' && command !== undefined) return `bash: ${command.split('\n')[0]?.slice(0, 140) ?? ''}`
@@ -227,8 +235,9 @@ const BUBBLED_SUBAGENT_EVENTS: string[] = [
   'retry',
 ]
 
-/** Stable identity for `always`: exact bash command, or one directory per write tool. */
+/** Stable identity for `always`: a tool's own key, else the exact bash command or one directory per write tool. */
 function approvalRuleKey(tool: ToolDefinition, args: Record<string, unknown>, cwd: string): string | undefined {
+  if (tool.ruleKeyFor !== undefined) return tool.ruleKeyFor(args, cwd)
   if (tool.name === 'bash') {
     const command = typeof args['command'] === 'string' ? args['command'].trim() : ''
     return command.length > 0 ? `bash:${command}` : undefined
@@ -271,6 +280,12 @@ export class Agent {
   private readonly onEvent: ((event: AgentEvent) => void) | undefined
   /** AGENTS.md / caller rules; forwarded to subagents so children obey the same project rules. */
   private readonly projectInstructions: string | undefined
+  /** Renders the memory index; absent means this agent keeps no cross-session notes. */
+  private readonly memoryIndexProvider: (() => string | undefined) | undefined
+  /** The memory index currently in the system prompt, refreshed at each turn start. */
+  private memoryBlock: string | undefined
+  /** A caller-supplied prompt wins over the built one, so refreshes leave it alone. */
+  private readonly promptOverride: string | undefined
   /** Tool-lifecycle shell hooks, inherited by subagents. */
   private readonly hooks: HooksConfig
   private readonly pricing: ((model: string) => ModelPricing | undefined) | undefined
@@ -313,12 +328,20 @@ export class Agent {
     this.onEvent = options.onEvent
     this.checkpointHook = options.checkpoint
     this.projectInstructions = options.extraInstructions
+    this.memoryIndexProvider = options.memoryIndex
+    this.memoryBlock = this.readMemoryIndex()
+    this.promptOverride = options.systemPrompt
     this.hooks = options.hooks ?? emptyHooks()
     this.systemMessage = {
       role: 'system',
       content:
         options.systemPrompt ??
-        buildSystemPrompt({ cwd: options.cwd, tools: this.tools.names(), extra: options.extraInstructions }),
+        buildSystemPrompt({
+          cwd: options.cwd,
+          tools: this.tools.names(),
+          extra: options.extraInstructions,
+          memory: this.memoryBlock,
+        }),
     }
     this.messages = [this.systemMessage]
   }
@@ -342,7 +365,35 @@ export class Agent {
     return this.modelOverride ?? this.provider.model
   }
 
+  /** Memory reading is fail-open: a broken note store must not break a turn. */
+  private readMemoryIndex(): string | undefined {
+    try {
+      return this.memoryIndexProvider?.()
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * Re-read the note index at turn start so a note saved in the previous turn is
+   * already in the prompt, without restarting the session. An explicit
+   * `systemPrompt` (subagents) owns its own text and is left untouched.
+   */
+  private refreshMemory(): void {
+    const next = this.readMemoryIndex()
+    if (next === this.memoryBlock) return
+    this.memoryBlock = next
+    if (this.promptOverride !== undefined) return
+    this.systemMessage.content = buildSystemPrompt({
+      cwd: this.cwd,
+      tools: this.tools.names(),
+      extra: this.projectInstructions,
+      memory: next,
+    })
+  }
+
   async *run(input: string, signal?: AbortSignal, images: ImagePart[] = []): AsyncGenerator<AgentEvent, void, void> {
+    this.refreshMemory()
     // Snapshot before the turn's first message: files are untouched at this
     // point, and subagents inherit the parent's snapshot instead of adding one.
     const checkpoint =
@@ -917,8 +968,13 @@ export class Agent {
 
     // Least privilege: start from what the parent can actually do (minus the
     // stateful tools the parent owns) and keep only the requested allowlist, so
-    // a child can never gain a tool its parent lacks.
-    const parentTools = this.tools.without(TASK_TOOL_NAME).without(ASK_TOOL_NAME).without(TODO_TOOL_NAME)
+    // a child can never gain a tool its parent lacks. Memory stays a top-level
+    // decision: a child reports what it found, the parent decides what to keep.
+    const parentTools = this.tools
+      .without(TASK_TOOL_NAME)
+      .without(ASK_TOOL_NAME)
+      .without(TODO_TOOL_NAME)
+      .without(MEMORY_TOOL_NAME)
     const allowlist = input.tools ?? preset.tools
     const childTools =
       allowlist === undefined
@@ -954,7 +1010,11 @@ export class Agent {
       maxToolTimeoutMs: this.maxToolTimeoutMs,
       maxRetries: this.maxRetries,
       retryDelayMs: this.retryDelayMs,
-      systemPrompt: [`${preset.systemPrompt}\n\nTask: ${input.description}`, this.projectInstructions]
+      systemPrompt: [
+        `${preset.systemPrompt}\n\nTask: ${input.description}`,
+        memorySection(this.memoryBlock),
+        this.projectInstructions,
+      ]
         .filter((part) => part !== undefined && part.trim().length > 0)
         .join('\n\n'),
       // The child's usage must reach the parent's turn total even when the

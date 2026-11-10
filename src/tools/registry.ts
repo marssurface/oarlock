@@ -2,6 +2,7 @@ import type { ToolSpec } from '../providers/types.ts'
 import { askTool } from './ask.ts'
 import { bashTool } from './bash.ts'
 import { fileTools } from './fs.ts'
+import { rememberTool } from './memory.ts'
 import { taskTool } from './task.ts'
 import { todoTool } from './todo.ts'
 import { toolSpec } from './types.ts'
@@ -48,7 +49,7 @@ export class ToolRegistry {
   }
 
   static default(options: { allowShell?: boolean; includeTask?: boolean } = {}): ToolRegistry {
-    const tools: ToolDefinition[] = [...fileTools, todoTool, askTool]
+    const tools: ToolDefinition[] = [...fileTools, rememberTool, todoTool, askTool]
     if (options.allowShell !== false) tools.push(bashTool)
     if (options.includeTask !== false) tools.push(taskTool)
     return new ToolRegistry(tools)

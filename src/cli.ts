@@ -11,6 +11,7 @@ import type { Agent } from './core/agent.ts'
 import type { AgentEvent } from './core/events.ts'
 import { formatCost } from './core/pricing.ts'
 import type { TokenCost } from './core/pricing.ts'
+import { MEMORY_RELATIVE_DIR, memoryStore } from './core/memory.ts'
 import { permissionRules } from './core/rules.ts'
 import { createRuntime } from './core/setup.ts'
 import type { Runtime } from './core/setup.ts'
@@ -148,7 +149,7 @@ function printHelp(): void {
       '  --deny                                    refuse writes/execs',
       '  --help                                    show this text',
       '',
-      'Inside the REPL: /help /new /sessions /resume <id> /rename <title> /fork [keep] [--restore] /delete <id> /exit',
+      'Inside the REPL: /help /new /sessions /resume <id> /rename <title> /fork [keep] [--restore] /delete <id> /memory [name] /forget <name> /exit',
       '',
     ].join('\n'),
   )
@@ -165,6 +166,8 @@ function printCommands(): void {
       color(90, '                  加 --restore 同时把文件回滚到该条消息之前（需 keep）'),
       color(90, '  /delete <id>    删除指定会话（不能删除当前会话）'),
       color(90, '  /trace          打印当前会话的轨迹'),
+      color(90, '  /memory [name]  列出跨会话记忆（给 name 看正文）'),
+      color(90, '  /forget <name>  删除一条记忆'),
       color(90, '  /exit           退出'),
       '',
     ].join('\n'),
@@ -184,6 +187,32 @@ function printSessions(store: SessionStore): void {
       `  ${color(36, session.id)}  ${session.title}  ${color(90, `${session.model} · ${session.messages} 条 · ${session.turns} 轮${usage.length > 0 ? ` · ${usage}` : ''}${cost.length > 0 ? ` · ${cost}` : ''} · ${session.updatedAt}`)}\n`,
     )
   }
+}
+
+/** Cross-session notes: `/memory` lists them, `/memory <name>` prints one. */
+function printMemory(cwd: string, name: string): void {
+  const store = memoryStore(cwd)
+  if (name.length === 0) {
+    const entries = store.list()
+    if (entries.length === 0) {
+      output.write(color(90, `  还没有记忆，让 agent「记住…」即可写入 ${MEMORY_RELATIVE_DIR}/\n`))
+      return
+    }
+    for (const entry of entries) {
+      output.write(
+        `  ${color(36, entry.name)}  ${color(90, entry.kind)}  ${entry.description}\n`,
+      )
+    }
+    output.write(color(90, `  共 ${entries.length} 条 · /memory <name> 看正文\n`))
+    return
+  }
+  const entry = store.read(name)
+  if (entry === undefined) {
+    output.write(color(33, `  没有名为 ${name} 的记忆\n`))
+    return
+  }
+  output.write(color(90, `  ${entry.kind} · ${entry.updatedAt}\n`))
+  output.write(`${entry.body}\n`)
 }
 
 /** Render streamed events for a terminal; approval prompts are handled by the gate. */
@@ -529,6 +558,24 @@ async function main(): Promise<void> {
     }
     if (text === '/trace') {
       printTrace(session)
+      continue
+    }
+    if (text === '/memory' || text.startsWith('/memory ')) {
+      printMemory(config.cwd, text.slice('/memory'.length).trim())
+      continue
+    }
+    if (text.startsWith('/forget')) {
+      const name = text.slice('/forget'.length).trim()
+      if (name.length === 0) {
+        output.write(color(90, '用法: /forget <name>，name 见 /memory\n'))
+        continue
+      }
+      const removed = memoryStore(config.cwd).remove(name)
+      output.write(
+        removed.removed
+          ? color(90, `已删除记忆 ${name}\n`)
+          : color(33, `${removed.error ?? '删除失败'}\n`),
+      )
       continue
     }
     if (text === '/new') {

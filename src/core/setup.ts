@@ -9,6 +9,7 @@ import type { ApprovalGate, AskGate, ToolDefinition } from '../tools/types.ts'
 import { Agent } from './agent.ts'
 import { checkpointDisabled, checkpointManager } from './checkpoint.ts'
 import { composeInstructions, readProjectInstructions } from './instructions.ts'
+import { memoryStore } from './memory.ts'
 import { pricingResolver } from './pricing.ts'
 import { ContextManager } from './context.ts'
 import type { AgentEvent } from './events.ts'
@@ -89,6 +90,8 @@ export function createRuntime(config: AppConfig, session: Session, options: Runt
     temperature: config.temperature,
     maxTokens: requestMaxTokens,
     onEvent,
+    // Notes from earlier sessions; re-read every turn so this turn's writes land next turn.
+    memoryIndex: () => memoryStore(config.cwd).index(),
     ...(instructions !== undefined ? { extraInstructions: instructions } : {}),
     persistence: {
       onMessage: (message) => session.append(message),

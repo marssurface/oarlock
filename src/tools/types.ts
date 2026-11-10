@@ -79,6 +79,14 @@ export interface ToolDefinition {
   risk: Risk
   /** Hard upper bound for one call; the agent also applies its own default. */
   timeoutMs?: number
+  /**
+   * Identity for an `always` decision, overriding the default (exact bash
+   * command, or one directory per write tool). Tools that do not take a `path`
+   * use this to widen approval as narrowly as the thing they actually touch.
+   */
+  ruleKeyFor?(args: Record<string, unknown>, cwd: string): string | undefined
+  /** Approval-card headline, overriding the default `tool: <path>` summary. */
+  summaryFor?(args: Record<string, unknown>): string | undefined
   execute(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>
 }
 

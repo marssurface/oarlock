@@ -1,9 +1,21 @@
 import { presetCatalog } from './subagents.ts'
+import { MEMORY_RELATIVE_DIR } from './memory.ts'
 
 export interface PromptOptions {
   cwd: string
   tools: string[]
   extra?: string
+  /** Rendered index of cross-session notes; see `memorySection`. */
+  memory?: string
+}
+
+/** The block that carries the note index into a system prompt (main agent and subagents alike). */
+export function memorySection(index: string | undefined): string | undefined {
+  if (index === undefined || index.trim().length === 0) return undefined
+  return [
+    `Memory from earlier sessions, one markdown file per note under \`${MEMORY_RELATIVE_DIR}/\`:`,
+    index.trim(),
+  ].join('\n')
 }
 
 export function buildSystemPrompt(options: PromptOptions): string {
@@ -35,6 +47,14 @@ export function buildSystemPrompt(options: PromptOptions): string {
       '- Use the ask_user tool when a real decision is ambiguous: a preference, a missing requirement, or a choice between approaches. Offer 2-4 concrete options, mark the one you recommend, and never ask something you can reasonably decide yourself.',
     )
   }
+  if (options.tools.includes('remember')) {
+    lines.push(
+      `- Earlier sessions can leave notes (see the Memory section below, when present). Use the remember tool to save one when something you just learned would cost real work to rediscover: a quirk of this machine, a standing user preference, a decision and its reason, a procedure. Keep each note short, self-contained and free of secrets; reuse a name to update rather than duplicating.`,
+      '- Memory is a claim, not a fact: check a remembered detail before acting on it, and drop or correct the note as soon as it contradicts what you now know.',
+    )
+  }
+  const memory = memorySection(options.memory)
+  if (memory !== undefined) lines.push('', memory)
   if (options.extra !== undefined && options.extra.trim().length > 0) {
     lines.push('', options.extra.trim())
   }

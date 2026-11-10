@@ -10,7 +10,7 @@
 | 代码智能 | LSP/tree-sitter 符号导航、AST 感知编辑、仓库索引/嵌入检索 | 只有 rg 文本检索，跨文件引用全靠模型自己 grep |
 | 编辑可靠性 | apply_patch 上下文匹配 + fuzzy fallback、多处编辑原子化 | 精确优先 + 受控 whitespace fallback（唯一整行匹配，diff 预览同源）；仍无 apply_patch 式上下文补丁与 `multi_edit` 原子批量 |
 | 权限与沙箱 | 规则持久化、模式化 allow/deny、OS 级沙箱（Seatbelt/Landlock） | 规则已按工作目录持久化（设置可查可清）；bash 仍靠灾难命令黑名单，无 OS 隔离 |
-| 记忆与索引 | 跨会话 auto-memory、项目知识沉淀、repo wiki | 只有 AGENTS.md 静态规则，会话之间互不学习 |
+| 记忆与索引 | 跨会话 auto-memory、项目知识沉淀、repo wiki | 已实现跨会话记忆：`.agent/memory/*.md` 一条一个文件，摘要每轮注入系统提示词，`remember` 工具写入/删除，按条目记审批规则。仍无自动沉淀（只记模型主动写的）、无用户级/全局层、无仓库知识索引 |
 | 后台与并发 | 后台长任务、并行子 agent、任务间消息 | 同一轮多个委派并行执行（信号量限流，默认 3）；仍无后台长任务、任务间通信，bash 每次新进程无状态 |
 | 协议与缓存 | Anthropic/Gemini 原生适配、主动 prompt cache 布局 | 仅 OpenAI 兼容线格式，缓存靠网关自动命中 |
 | 内置网络工具 | WebSearch/WebFetch/浏览器自动化一等工具 | 无内置网络能力，靠 MCP 外挂 |
@@ -51,9 +51,20 @@
 
 落地细节：`task` 加入同批执行资格（只读工具与委派都不干扰彼此状态，`ask_user`/`todo_write` 仍串行），批量结果与转录沿用既有的按调用顺序落盘。限流是 `core/semaphore.ts` 的计数信号量，父 agent 一份 `maxConcurrentSubagents`（`AGENT_MAX_CONCURRENT_SUBAGENTS`，默认 3），批里的委派先拿槽位再开始计时，所以排队不消耗它自己的工具超时；预算继承与最小权限装配不变。事件顺序用「按调用缓冲再冲刷」：批量里有 ≥2 个委派时，每个调用的嵌套活动（子 agent 事件、起止标记、重试）先进入该调用的缓冲区，轮到它时一次冲刷，渲染端一委派一块；单个委派仍实时流式。`approval-request`/`approval-decision` 永不缓冲，并且 `approvalLock`（1 槽信号量，父与所有子共用）把「发问—等回答」串成一次一个——Web 只有一张审批卡、CLI 只有一条 readline。没有新增事件类型，协议与旧轨迹不受影响。细节与边界见 [subagents.md](./subagents.md)。声明式 `.agent/agents/*.md` 注册表仍未做。
 
+### ⑤ 跨会话记忆（已完成）
+
+补上「这次学到的东西下次还要重新学」的缺口：agent 主动把事实、偏好、决定、做法写成一条条短笔记，之后的每个会话一开始就能看见。
+
+- `core/memory.ts`：`.agent/memory/<slug>.md`，一条一个文件，frontmatter 存 `name/description/kind`，正文给人和模型一起读。slug 归一（空格/下划线/冒号折成 `-`）顺带挡掉目录穿越；写入是临时文件 + rename 的原子替换；目录缺失、frontmatter 损坏一律 fail-open，手写文件按「第一行当摘要」继续索引。
+- 注入：`createRuntime` 给 Agent 一个 `memoryIndex` 函数，**每轮开始重读目录并重建系统提示词**——本轮写的笔记下一轮就在，不需要重启；索引有上限（60 条 / 约 4000 字符，剩余折叠成一行提示），只给摘要不给正文，细节靠 `read_file`。
+- `remember` 工具（`tools/memory.ts`，risk `write`）：`write` / `remove` 两个动作。审批规则按条目走（`remember:write:<name>` / `remember:remove:<name>` 分别是两个键），这是 `ToolDefinition` 新增 `ruleKeyFor` / `summaryFor` 的原因——没有路径参数的工具第一次能自己说清「这一步放行的是什么」。
+- 子 agent 看得到摘要但没有 `remember`：孩子汇报，父级决定什么值得记。
+- 人的入口：CLI `/memory [name]` 与 `/forget <name>`；文件本身是普通 markdown，`.agent/` 已被 gitignore，所以记忆是这台机器这个目录的状态，不会随仓库提交。
+- 未做（有意）：自动沉淀（每轮多花一次模型调用，且噪声多）、失效时间、用户级/全局记忆层。完整语义与边界见 [memory.md](./memory.md)。
+
 ### 暂不排期
 
-剩下的差距工程量都不小，各自单独立项。按通用定位排序（谁离「任何任务都用得上」更近谁在前）：跨会话记忆、后台长任务与任务间通信、内置网络工具（WebSearch / WebFetch / 浏览器）在前；OS 沙箱、原生 Anthropic/Gemini 协议是可靠性与覆盖面，随后；纯编码场景专属的代码智能（LSP / tree-sitter / 仓库索引）与 IDE 集成排在最后——对写代码收益大，但不扩展 runtime 的通用能力边界。`.agent/agents/*.md` 声明式子 agent 注册表属于通用能力，工程量可控，可以插队。
+剩下的差距工程量都不小，各自单独立项。按通用定位排序（谁离「任何任务都用得上」更近谁在前）：后台长任务与任务间通信、内置网络工具（WebSearch / WebFetch / 浏览器）在前；OS 沙箱、原生 Anthropic/Gemini 协议是可靠性与覆盖面，随后；纯编码场景专属的代码智能（LSP / tree-sitter / 仓库索引）与 IDE 集成排在最后——对写代码收益大，但不扩展 runtime 的通用能力边界。`.agent/agents/*.md` 声明式子 agent 注册表属于通用能力，工程量可控，可以插队。记忆里还差的两步——自动沉淀与用户级作用域——也属通用能力，等真实用过一段再决定。
 
 ## 设计约束（沿用）
 

@@ -52,7 +52,7 @@ agent/
 ├── .github/workflows/ci.yml   # CI：typecheck + test + build + bench + 录制回放
 ├── scripts/copy-assets.mjs    # 构建时把 Web 静态页复制进 dist/
 ├── Dockerfile                 # 多阶段构建；运行镜像不含依赖和源码
-└── test/                      # node:test，192 个用例
+└── test/                      # node:test，204 个用例
 ```
 
 ## 快速开始
@@ -105,7 +105,7 @@ node src/cli.ts --trace <session-id>  # 打印该会话的轨迹
 node src/cli.ts --once "解释这个仓库"  # 跑一轮就退出
 ```
 
-REPL 内命令：`/new`、`/sessions`、`/resume <id>`、`/trace`、`/help`、`/exit`。
+REPL 内命令：`/new`、`/sessions`、`/resume <id>`、`/trace`、`/memory [name]`、`/forget <name>`、`/help`、`/exit`。
 
 ## Web 界面
 
@@ -219,6 +219,8 @@ loop step = 1..maxSteps:
 
 **项目规则**（`core/instructions.ts` + `core/setup.ts`）：`createRuntime` 读取工作目录下的 `AGENTS.md`，去空白后经 `composeInstructions` 拼在系统提示词末尾——这是仓库对 agent 的长期约定（用什么包管理器、跑哪些命令、有哪些禁区），CLI、Web、bench 共用同一条 runtime 链路所以自动生效。文件缺失或为空则整段省略，不注入噪声。子 agent 委派时会把同一份规则附在它的角色提示之后，确保孩子不会违反父级已知的仓库约定。完整说明见 [docs/project-rules.md](docs/project-rules.md)。
 
+**跨会话记忆**（`core/memory.ts` + `tools/memory.ts` + `agent.ts`）：agent 在这个工作目录学到的东西存成 `.agent/memory/<slug>.md`，一条一个文件——frontmatter 记 `name/description/kind`，正文是短笔记，人和模型一起读，`.agent/` 已在 gitignore 里所以不随仓库提交。`createRuntime` 给 Agent 一个 `memoryIndex` 渲染函数，**每轮开始重读目录**、把摘要列表注进系统提示词（上限 60 条 / 约 4000 字符，只给摘要不给正文，细节用 `read_file` 取），因此这一轮写下的笔记下一轮就在，不需要重启会话。写入走 `remember` 工具（risk `write`，`write` / `remove`）：审批规则按条目记（`remember:write:<name>` 与 `remember:remove:<name>` 互不相干），这是 `ToolDefinition` 新增可选 `ruleKeyFor` / `summaryFor` 的用处。子 agent 看得到摘要但没有 `remember`——孩子汇报，父级决定什么值得记。目录缺失、frontmatter 损坏、渲染函数抛错一律 fail-open；手写文件按「第一行当摘要」继续索引。CLI 用 `/memory [name]` 看、`/forget <name>` 删。完整语义与边界见 [docs/memory.md](docs/memory.md)。
+
 **工具钩子**（`core/hooks.ts` + `.agent/hooks.json`）：在工具生命周期上挂 shell 命令，对齐 Claude Code 的做法。`PreToolUse` 在审批与执行之前跑，可 `block`（直接返回错误、不执行工具）、`allow`（跳过交互式审批，但 `deny` 策略仍优先）或中性放行；`PostToolUse` 在工具成功后跑，可把结果 `block` 标记为错误回灌模型，或追加上下文。钩子用 `bash -c` 执行，事件 JSON（工具名/参数/输出）走 stdin，决策由退出码或 stdout JSON 表达：`exit 2` 或 `{"decision":"block","reason":…}` 拦截、`{"decision":"allow"}` 放行、其它非零退出与超时/中断一律 **fail-open**（坏钩子不拖垮回合）。`matcher` 按工具名精确匹配或 `*` 通配；没有匹配项就不起进程，默认（无 hooks.json）零开销。子 agent 继承同一套钩子。详见 [docs/hooks.md](docs/hooks.md)。
 
 **MCP 外部工具**（`src/mcp/` + `.agent/mcp.json`）：启动时按配置 spawn 每个 stdio MCP 服务器，走 `initialize` + `tools/list` 握手，把服务器工具转换成普通工具注入注册表——名称 `mcp__<server>__<tool>`，参数沿用其 `inputSchema`，风险等级按服务器配置（默认 `exec`，需审批）。模型侧看到的就是普通工具：审批、并行、钩子、轨迹与子 agent 全部复用现有链路。任何一个服务器 spawn 失败、握手失败或超时都只记一条告警并跳过，不影响其余服务器与 harness 启动；没有配置时不 spawn 任何进程。工具集在进程启动时固定，重启才刷新。完整说明见 [docs/mcp.md](docs/mcp.md)。
@@ -237,6 +239,7 @@ loop step = 1..maxSteps:
 | `list_files` | read | 目录树，跳过 node_modules/.git 等 |
 | `glob_files` | read | `**/*.ts` 风格匹配 |
 | `grep_files` | read | 正则搜索，`file:line: text`；有 ripgrep 时优先用 rg，失败回退 JS walk |
+| `remember` | write | 写/删一条跨会话记忆（`.agent/memory/<slug>.md`），审批规则按条目记（子 agent 不可用） |
 | `bash` | exec | `bash -c`（不加载登录 profile），60s 默认超时（超时/中止按错误返回），输出截断 |
 | `task` | read | 委派子 agent 并取回报告；可按 `agent` 预设路由、`model` 分层、`tools` 最小权限白名单，同批多个委派并行（默认 3 路限流） |
 | `ask_user` | read | 向用户弹交互式选择卡，答案回灌给模型（子 agent 不可用） |
@@ -244,7 +247,7 @@ loop step = 1..maxSteps:
 
 ## 扩展
 
-新增工具只要实现 `ToolDefinition`（名称、描述、JSON Schema、风险等级、`execute`），注册进 `ToolRegistry` 即可，模型会自动看到 schema。
+新增工具只要实现 `ToolDefinition`（名称、描述、JSON Schema、风险等级、`execute`），注册进 `ToolRegistry` 即可，模型会自动看到 schema。需要自定义「这一步放行的是什么」的工具再实现两个可选项：`ruleKeyFor` 决定「始终允许」记下的规则键（默认是完整 bash 命令或写操作所在目录，`remember` 用它做到按条目授权），`summaryFor` 决定审批卡上那一行摘要。
 
 新增模型后端只要实现 `ChatProvider`：
 
@@ -301,12 +304,12 @@ node bench/run.ts --verbose --keep               # 打印工具活动、保留�
 ## 测试
 
 ```bash
-node --test test/*.test.ts   # 192 个用例，约 8s
+node --test test/*.test.ts   # 204 个用例，约 8s
 node bench/run.ts            # 17 个评测任务
 pnpm typecheck               # tsc --noEmit
 ```
 
-覆盖：工具循环、未知工具、并行只读并发与调用顺序、并发委派（同批一起跑与按调用顺序成块、超出槽位先排队、并发子 agent 的审批提示一次只出一个且实时送达、单独委派不被缓冲）、todo_write 计划替换/校验/串行、每轮 token/时间预算 graceful 收尾与 env 解析、审批拒绝、审批放行、步数上限、子 agent、token 估算、按请求记录 usage/首字/耗时、provider 缺 usage 时的估算兜底、子 agent 用量冒泡与父轮合计、子 agent 预设路由（`explore` 只读白名单）、最小权限工具交集不越权、`model` 分层进子请求与事件标签、`request.model` 覆盖与默认回退、未知 `agent` 预设报错、`AGENTS.md` 项目规则读取（存在/缺失/空白）与合并顺序、`createRuntime` 把规则拼进系统提示词、子 agent 继承父级项目规则、工具钩子解释器（exit2/JSON block/allow/中性 context、非零与超时 fail-open、matcher 通配与精确、stdin 携带调用、readHooks 存在/缺失/非法）、PreToolUse 拦截阻止执行与 allow 跳过审批但 deny 优先、PostToolUse 把成功结果标错回灌、MCP 配置校验（非法名/缺 command 丢弃、非法 risk 只丢字段）、假 stdio 服务器握手与 `tools/list` / `tools/call` 映射、坏服务器与超时 fail-open、`createRuntime` 合并 extraTools 且跳过重名、摘要压缩与压缩请求记账、压缩后会话恢复、SSE 流解析（文本/推理/工具调用/usage/DeepSeek 缓存字段）、HTTP 错误、路径越界、危险命令、glob/grep/edit 边界、瞬时错误重试与「已输出后不重试」、录制/回放与请求指纹、工具超时按错误上报、超长输出截断（含落盘的历史消息）、会话 token 汇总与旧轨迹回退、轨迹面板 DOM（jsdom 里点开轨迹断言轮次/请求/用户/助手/工具/Token 列/检查器用量与累计，以及实时 SSE 追加后的汇总更新）、全局模型切换（发送框菜单只列已启用清单、点选即全局生效、设置面板左导航+右内容且模型板块预设/详情两栏、启用/使用/移除清单、预设快捷填充、刷新后下拉列出全部模型、密钥不回显、Esc 关闭）、外观板块主题即时切换与跟随系统、`/api/settings`（持久化、空闲会话立即重建 runtime、非法输入 400）、按端点保存 Key 与 `keyed` 列表、`/api/settings/enabled`（登记/移除不改动当前模型、重复登记保持顺序、清空后不复活、GET 不携带密钥）、`/api/settings/models`（读取厂商 `/models`、401/超时按 502 上报）、图片输入（content parts 文本/图片读取、OpenAI `image_url` 线格式、`run()` 附件与 `turn-start.attachments`、无图保持字符串、每图 1200 token 估算与摘要占位符不泄漏 base64、会话 parts 持久化与纯图片标题、图片-only SSE 回合、附件 API 400/413 校验矩阵、历史缩略图渲染、模型能力门控附件按钮、成本核算（计价公式与缓存切分、无缓存价回退、解析校验、同名模型端点优先、单价持久化/保留/显式清除、设置 API 往返、`usage` 事件成本快照、轨迹按币种聚合、设置面板单价回显与清空、已启用列表徽标、轨迹与会话列表成本展示、会话管理（store 重命名保留 mtime 与清空回退、同毫秒时间戳按 id 兜底排序、删除转录与轨迹、分支前缀/全量/空分支/越界校验、PATCH/DELETE/fork API 与运行中 409、侧栏菜单内联重命名与二次确认删除、用户消息分支预填）、Retry-After 头解析（秒数/三种 HTTP-date/垃圾值）与重试延迟取大封顶、grep_files ripgrep 优先（参数映射、结果上限、拒绝模式与坏路径回退、后端开关、真 rg 与 JS walk 输出一致）、运行时录制开关（目录解析与优先级、请求/事件落盘、失败记录重抛、写盘 fail-open、createRuntime 按开关包装）、工作区快照（快照/恢复往返、空工作区锚点、排除目录不动、未知快照拒绝、无 git 与开关关闭降级、每主轮一次且子 agent 不拍、压缩轨迹后缀对齐与文本漂移 fail-safe、fork `restoreFiles` 端到端与无快照回退、Web 两次点击确认与回执）、权限规则持久化（宽容读取缺失/损坏/重复文件、add/remove/clear 落盘与跨实例读取、规则门禁预检与 always 记忆、无 store 保留内存语义、`/api/settings` 返回规则、单条移除/清空 API 与非法输入 400、设置权限板块列表与二次确认清空、edit 空白容错（精确优先与整行唯一回退、最短片段门槛、行内空白不等价、逐行与统一缩进重映射、CRLF 保持、tab 与空格不强改、审批 diff 与执行同源））。
+覆盖：工具循环、未知工具、并行只读并发与调用顺序、并发委派（同批一起跑与按调用顺序成块、超出槽位先排队、并发子 agent 的审批提示一次只出一个且实时送达、单独委派不被缓冲）、todo_write 计划替换/校验/串行、每轮 token/时间预算 graceful 收尾与 env 解析、审批拒绝、审批放行、步数上限、子 agent、token 估算、按请求记录 usage/首字/耗时、provider 缺 usage 时的估算兜底、子 agent 用量冒泡与父轮合计、子 agent 预设路由（`explore` 只读白名单）、最小权限工具交集不越权、`model` 分层进子请求与事件标签、`request.model` 覆盖与默认回退、未知 `agent` 预设报错、`AGENTS.md` 项目规则读取（存在/缺失/空白）与合并顺序、`createRuntime` 把规则拼进系统提示词、子 agent 继承父级项目规则、工具钩子解释器（exit2/JSON block/allow/中性 context、非零与超时 fail-open、matcher 通配与精确、stdin 携带调用、readHooks 存在/缺失/非法）、PreToolUse 拦截阻止执行与 allow 跳过审批但 deny 优先、PostToolUse 把成功结果标错回灌、MCP 配置校验（非法名/缺 command 丢弃、非法 risk 只丢字段）、假 stdio 服务器握手与 `tools/list` / `tools/call` 映射、坏服务器与超时 fail-open、`createRuntime` 合并 extraTools 且跳过重名、摘要压缩与压缩请求记账、压缩后会话恢复、SSE 流解析（文本/推理/工具调用/usage/DeepSeek 缓存字段）、HTTP 错误、路径越界、危险命令、glob/grep/edit 边界、瞬时错误重试与「已输出后不重试」、录制/回放与请求指纹、工具超时按错误上报、超长输出截断（含落盘的历史消息）、会话 token 汇总与旧轨迹回退、轨迹面板 DOM（jsdom 里点开轨迹断言轮次/请求/用户/助手/工具/Token 列/检查器用量与累计，以及实时 SSE 追加后的汇总更新）、全局模型切换（发送框菜单只列已启用清单、点选即全局生效、设置面板左导航+右内容且模型板块预设/详情两栏、启用/使用/移除清单、预设快捷填充、刷新后下拉列出全部模型、密钥不回显、Esc 关闭）、外观板块主题即时切换与跟随系统、`/api/settings`（持久化、空闲会话立即重建 runtime、非法输入 400）、按端点保存 Key 与 `keyed` 列表、`/api/settings/enabled`（登记/移除不改动当前模型、重复登记保持顺序、清空后不复活、GET 不携带密钥）、`/api/settings/models`（读取厂商 `/models`、401/超时按 502 上报）、图片输入（content parts 文本/图片读取、OpenAI `image_url` 线格式、`run()` 附件与 `turn-start.attachments`、无图保持字符串、每图 1200 token 估算与摘要占位符不泄漏 base64、会话 parts 持久化与纯图片标题、图片-only SSE 回合、附件 API 400/413 校验矩阵、历史缩略图渲染、模型能力门控附件按钮、成本核算（计价公式与缓存切分、无缓存价回退、解析校验、同名模型端点优先、单价持久化/保留/显式清除、设置 API 往返、`usage` 事件成本快照、轨迹按币种聚合、设置面板单价回显与清空、已启用列表徽标、轨迹与会话列表成本展示、会话管理（store 重命名保留 mtime 与清空回退、同毫秒时间戳按 id 兜底排序、删除转录与轨迹、分支前缀/全量/空分支/越界校验、PATCH/DELETE/fork API 与运行中 409、侧栏菜单内联重命名与二次确认删除、用户消息分支预填）、Retry-After 头解析（秒数/三种 HTTP-date/垃圾值）与重试延迟取大封顶、grep_files ripgrep 优先（参数映射、结果上限、拒绝模式与坏路径回退、后端开关、真 rg 与 JS walk 输出一致）、运行时录制开关（目录解析与优先级、请求/事件落盘、失败记录重抛、写盘 fail-open、createRuntime 按开关包装）、工作区快照（快照/恢复往返、空工作区锚点、排除目录不动、未知快照拒绝、无 git 与开关关闭降级、每主轮一次且子 agent 不拍、压缩轨迹后缀对齐与文本漂移 fail-safe、fork `restoreFiles` 端到端与无快照回退、Web 两次点击确认与回执）、权限规则持久化（宽容读取缺失/损坏/重复文件、add/remove/clear 落盘与跨实例读取、规则门禁预检与 always 记忆、无 store 保留内存语义、`/api/settings` 返回规则、单条移除/清空 API 与非法输入 400、设置权限板块列表与二次确认清空、edit 空白容错（精确优先与整行唯一回退、最短片段门槛、行内空白不等价、逐行与统一缩进重映射、CRLF 保持、tab 与空格不强改、审批 diff 与执行同源）、跨会话记忆（frontmatter 往返、手写与损坏文件降级索引、slug 归一并挡住目录穿越、同名覆盖、空/超长正文拒绝且原文件不动、索引上限与省略提示、`remember` 各分支、按条目的审批规则键、本轮写入下轮进入系统提示词、`memoryIndex` 抛错不拖垮回合、子 agent 能看不能写））。
 
 ## CI
 

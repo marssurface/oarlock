@@ -37,8 +37,11 @@ P1 至此全部完成。
 
 P2 至此全部完成。
 
+### P3 / P4 与业界差距
+
+工作区 checkpoint、权限规则持久化、编辑容错、子 agent 并发、跨会话记忆已落地（`.agent/memory/*.md` + `remember` 工具，摘要每轮注入系统提示词；`ToolDefinition` 为此新增可选的 `ruleKeyFor` / `summaryFor`，让不带路径参数的工具也能按条目记审批规则）。详见 [memory.md](./memory.md) 与 [roadmap.md](./roadmap.md)。
+
 ## 设计约束
 
-- 事件协议是对外接口：新增字段保持可选，旧轨迹与旧测试不受影响。
-- ABORT 语义保持 `error: 'aborted'`（bench `abort-turn` 依赖该断言）；UI 负责本地化成「已停止」。
+- 事件协议是对外接口：新增字段保持可选，旧轨迹与旧测试不受影响。- ABORT 语义保持 `error: 'aborted'`（bench `abort-turn` 依赖该断言）；UI 负责本地化成「已停止」。
 - 审批规则自 P3 起按工作目录落盘到 `.agent/permissions.json`（仍只放宽审批、不覆盖 deny 策略）；持久化仍只走 `.agent/` 文件，不引入数据库。
