@@ -5,7 +5,7 @@ import type { HooksConfig } from './core/hooks.ts'
 import { parsePricing } from './core/pricing.ts'
 import type { ModelPricing } from './core/pricing.ts'
 
-export type ProviderKind = 'deepseek' | 'openai' | 'ollama' | 'mock'
+export type ProviderKind = 'deepseek' | 'openai' | 'ollama' | 'anthropic' | 'mock'
 export type ApprovalMode = 'ask' | 'auto' | 'deny'
 
 export interface AppConfig {
@@ -60,10 +60,11 @@ const PROVIDER_DEFAULTS: Record<ProviderKind, { baseUrl: string; model: string }
   deepseek: { baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' },
   openai: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4.1-mini' },
   ollama: { baseUrl: 'http://127.0.0.1:11434/v1', model: 'qwen3:8b' },
+  anthropic: { baseUrl: 'https://api.anthropic.com/v1', model: 'claude-sonnet-4-5' },
   mock: { baseUrl: 'http://mock.invalid/v1', model: 'mock-1' },
 }
 
-export const PROVIDER_KINDS: ProviderKind[] = ['deepseek', 'openai', 'ollama', 'mock']
+export const PROVIDER_KINDS: ProviderKind[] = ['deepseek', 'openai', 'ollama', 'anthropic', 'mock']
 
 export function providerDefaults(provider: ProviderKind): { baseUrl: string; model: string } {
   return PROVIDER_DEFAULTS[provider]
@@ -265,6 +266,7 @@ function env(name: string): string | undefined {
 function detectProvider(): ProviderKind {
   const explicit = env('AGENT_PROVIDER')?.toLowerCase()
   if (explicit !== undefined && (PROVIDER_KINDS as string[]).includes(explicit)) return explicit as ProviderKind
+  if (env('ANTHROPIC_API_KEY') !== undefined) return 'anthropic'
   if (env('DEEPSEEK_API_KEY') !== undefined) return 'deepseek'
   if (env('OPENAI_API_KEY') !== undefined) return 'openai'
   return 'mock'
@@ -273,12 +275,14 @@ function detectProvider(): ProviderKind {
 function apiKeyFor(provider: ProviderKind): string | undefined {
   if (provider === 'deepseek') return env('DEEPSEEK_API_KEY')
   if (provider === 'openai') return env('OPENAI_API_KEY')
+  if (provider === 'anthropic') return env('ANTHROPIC_API_KEY')
   return undefined
 }
 
 function baseUrlFor(provider: ProviderKind): string | undefined {
   if (provider === 'deepseek') return env('DEEPSEEK_BASE_URL')
   if (provider === 'openai') return env('OPENAI_BASE_URL')
+  if (provider === 'anthropic') return env('ANTHROPIC_BASE_URL')
   if (provider === 'ollama') return env('OLLAMA_BASE_URL')
   return undefined
 }

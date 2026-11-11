@@ -39,7 +39,7 @@ P2 至此全部完成。
 
 ### P3 / P4 与业界差距
 
-工作区 checkpoint、权限规则持久化、编辑容错、子 agent 并发、跨会话记忆、声明式子 agent 预设、内置网页抓取已落地。记忆是 `.agent/memory/*.md` + `remember` 工具，摘要每轮注入系统提示词；`ToolDefinition` 为此新增可选的 `ruleKeyFor` / `summaryFor`，让不带路径参数的工具也能按条目记审批规则。子 agent 预设是 `.agent/agents/*.md`（frontmatter 路由字段 + 正文人格），与记忆同一个每轮刷新时机，共用 `core/frontmatter.ts` 的宽容解析。`web_fetch` 用 Node 自带 fetch 拉单个已知 URL：流式截断到约 1.5MB 停读、HTML 转近似纯文本、跳转逐跳重验 scheme/主机并挡回环与 RFC1918 私网地址（挡不住 DNS 之后才解析到内网的名字，属尽力而为）；WebSearch 未做，需要先定搜索后端。详见 [memory.md](./memory.md)、[agent-presets.md](./agent-presets.md) 与 [roadmap.md](./roadmap.md)。
+工作区 checkpoint、权限规则持久化、编辑容错、子 agent 并发、跨会话记忆、声明式子 agent 预设、内置网页抓取、Anthropic 原生 Messages 协议已落地。记忆是 `.agent/memory/*.md` + `remember` 工具，摘要每轮注入系统提示词；`ToolDefinition` 为此新增可选的 `ruleKeyFor` / `summaryFor`，让不带路径参数的工具也能按条目记审批规则。子 agent 预设是 `.agent/agents/*.md`（frontmatter 路由字段 + 正文人格），与记忆同一个每轮刷新时机，共用 `core/frontmatter.ts` 的宽容解析。`web_fetch` 用 Node 自带 fetch 拉单个已知 URL：流式截断到约 1.5MB 停读、HTML 转近似纯文本、跳转逐跳重验 scheme/主机并挡回环与 RFC1918 私网地址（挡不住 DNS 之后才解析到内网的名字，属尽力而为）；WebSearch 未做，需要先定搜索后端。`AnthropicProvider`（`providers/anthropic.ts`）按 `provider: 'anthropic'` 路由，系统提示抽到顶层 `system` 字段、工具结果折进用户轮 `tool_result` 块、流式 SSE 事件按 content_block 增量映射到既有事件协议；Gemini 原生线与主动 `cache_control` 布局未做。详见 [memory.md](./memory.md)、[agent-presets.md](./agent-presets.md) 与 [roadmap.md](./roadmap.md)。
 
 ## 设计约束
 

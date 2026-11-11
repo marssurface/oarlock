@@ -12,7 +12,7 @@
 | 权限与沙箱 | 规则持久化、模式化 allow/deny、OS 级沙箱（Seatbelt/Landlock） | 规则已按工作目录持久化（设置可查可清）；bash 仍靠灾难命令黑名单，无 OS 隔离 |
 | 记忆与索引 | 跨会话 auto-memory、项目知识沉淀、repo wiki | 已实现跨会话记忆：`.agent/memory/*.md` 一条一个文件，摘要每轮注入系统提示词，`remember` 工具写入/删除，按条目记审批规则。仍无自动沉淀（只记模型主动写的）、无用户级/全局层、无仓库知识索引 |
 | 后台与并发 | 后台长任务、并行子 agent、任务间消息 | 同一轮多个委派并行执行（信号量限流，默认 3），子 agent 预设可声明在 `.agent/agents/*.md`；仍无后台长任务、任务间通信，bash 每次新进程无状态 |
-| 协议与缓存 | Anthropic/Gemini 原生适配、主动 prompt cache 布局 | 仅 OpenAI 兼容线格式，缓存靠网关自动命中 |
+| 协议与缓存 | Anthropic/Gemini 原生适配、主动 prompt cache 布局 | 已实现 Anthropic 原生 Messages 线格式（`provider: 'anthropic'`，见 ⑧）；缓存靠网关自动命中；Gemini 与主动 cache_control 布局未做 |
 | 内置网络工具 | WebSearch/WebFetch/浏览器自动化一等工具 | `web_fetch` 已实现（Node 自带 fetch，流式截断 + 逐跳跳转校验 + SSRF 尽力守卫，见 ⑦）；WebSearch 仍缺——需要先定一个搜索后端 |
 
 「有但浅」的几处：压缩是启发式估算 + 摘要（先进做法保留文件状态做结构化微压缩）；bench 是 17 个合成任务，缺 SWE-bench 式真实仓库评测；无 IDE 集成、无 git 工作流（自动提交/PR）、无插件/技能生态。
@@ -85,9 +85,19 @@
 - 复用既有超时语义：`AbortSignal.timeout(30s)`/跳，与父 `ctx.signal` 组合，超时/中断按错误文本返回给模型。
 - WebSearch（需要搜索后端）与浏览器自动化（要无头浏览器）有意未做。
 
+### ⑧ 原生 Anthropic 协议（已完成）
+
+补上「只有 OpenAI 兼容线」的缺口：加一条 Anthropic Messages API 原生适配器，prompt cache 的一等结构（`cache_control`）留给后续按需开。
+
+- `providers/anthropic.ts`：`AnthropicProvider`，走 `/v1/messages`、SSE 流式、`x-api-key` + `anthropic-version: 2023-06-01` 头；`createProvider` 在 `config.provider === 'anthropic'` 时路由过来，其余 provider 仍是 OpenAI 兼容线。
+- 消息映射：系统提示抽到顶层 `system` 字段；`role: 'tool'` 折进用户轮的 `tool_result` 块，相邻工具结果与下一条用户文本合并到同一个 user turn（否则相邻 tool_result 会被拆成多个 user 消息）；assistant 的 tool_calls 映射成 `tool_use` 块；tool 参数的 JSON 字符串在发线前 parse 成对象（发不出坏请求）。
+- 流式事件：`message_start` / `content_block_start` / `content_block_delta`（text_delta / thinking_delta / input_json_delta）/ `content_block_stop` / `message_delta` / `message_stop`；工具调用在 input_json_delta 累积完后一次发出，`stop_reason` 映射到既有 `FinishReason`（end_turn→stop、tool_use→tool_calls、max_tokens→length）。
+- usage：`input_tokens` / `output_tokens` / `cache_read_input_tokens` 映射到 `Usage`，usage 在 message_start 和 message_delta 两处取（后者覆盖 output）。
+- 配置：`ProviderKind` 加 `'anthropic'`，默认 `https://api.anthropic.com/v1` + `claude-sonnet-4-5`；`ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` 环境变量与 settings 走同一条 `.agent/keys.json` 端点键。Gemini 原生线与主动 cache_control 布局有意未做。
+
 ### 暂不排期
 
-剩下的差距工程量都不小，各自单独立项。按通用定位排序（谁离「任何任务都用得上」更近谁在前）：后台长任务与任务间通信、内置网络工具里的 WebSearch / 浏览器自动化（`web_fetch` 已在 ⑦ 落地）在前；OS 沙箱、原生 Anthropic/Gemini 协议是可靠性与覆盖面，随后；纯编码场景专属的代码智能（LSP / tree-sitter / 仓库索引）与 IDE 集成排在最后——对写代码收益大，但不扩展 runtime 的通用能力边界。记忆里还差的两步——自动沉淀与用户级作用域——属通用能力，等真实用过一段再决定；跨会话记忆与预设目录的 Web 管理入口同理。
+剩下的差距工程量都不小，各自单独立项。按通用定位排序（谁离「任何任务都用得上」更近谁在前）：后台长任务与任务间通信、内置网络工具里的 WebSearch / 浏览器自动化（`web_fetch` 已在 ⑦ 落地）在前；OS 沙箱随后；原生 Anthropic 已在 ⑧ 落地，Gemini 原生线与主动 prompt cache 布局是同一个 provider 家族的另一半；纯编码场景专属的代码智能（LSP / tree-sitter / 仓库索引）与 IDE 集成排在最后——对写代码收益大，但不扩展 runtime 的通用能力边界。记忆里还差的两步——自动沉淀与用户级作用域——属通用能力，等真实用过一段再决定；跨会话记忆与预设目录的 Web 管理入口同理。
 
 ## 设计约束（沿用）
 

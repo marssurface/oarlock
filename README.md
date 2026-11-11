@@ -12,6 +12,7 @@ agent/
 │   │   ├── types.ts           # ChatProvider 接口与消息/事件协议（content parts）
 │   │   ├── content.ts         # 文本/图片片段读取、data URL 与消息组装
 │   │   ├── openai-compatible.ts  # DeepSeek / OpenAI / Ollama / 任意兼容网关
+│   │   ├── anthropic.ts         # Anthropic Messages 原生线（provider: 'anthropic'）
 │   │   ├── recording.ts         # 可选运行时录制（AGENT_RECORD，网关调试用）
 │   │   └── mock.ts            # 无 key 也能跑通的假模型
 │   ├── tools/
@@ -56,7 +57,7 @@ agent/
 ├── .github/workflows/ci.yml   # CI：typecheck + test + build + bench + 录制回放
 ├── scripts/copy-assets.mjs    # 构建时把 Web 静态页复制进 dist/
 ├── Dockerfile                 # 多阶段构建；运行镜像不含依赖和源码
-└── test/                      # node:test，219 个用例
+└── test/                      # node:test，224 个用例
 ```
 
 ## 快速开始
@@ -313,7 +314,7 @@ node bench/run.ts --verbose --keep               # 打印工具活动、保留�
 ## 测试
 
 ```bash
-node --test test/*.test.ts   # 219 个用例，约 8s
+node --test test/*.test.ts   # 224 个用例，约 8s
 node bench/run.ts            # 17 个评测任务
 pnpm typecheck               # tsc --noEmit
 ```
