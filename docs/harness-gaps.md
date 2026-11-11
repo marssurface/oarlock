@@ -19,7 +19,7 @@
 - **并行只读工具**：已实现。连续的 `read` 风险调用与 `task` 委派（除 `ask_user`、`todo_write`）会并发执行；`write` / `exec` / 交互类保持串行。`tool-call` / `tool-result` 事件与转录消息仍按模型调用顺序输出，完成顺序不影响可读性。
 - **计划状态**：已实现。新增状态型工具 `todo_write`：Agent 拦截并保存当前计划（`agent.plan()`），每次全量替换、至多一项 `in_progress`；发布 `todo` 事件并写入轨迹，CLI 与 Web 轨迹均渲染计划行与明细。子 agent 不携带该工具，也不参与并发批处理。
 - **每轮预算**：已实现。新增 `maxTurnTokens` / `maxTurnMs`（env `AGENT_MAX_TURN_TOKENS` / `AGENT_MAX_TURN_MS`，默认不限）；在 step 之间检查累计 token（含子 agent 用量）与 wall-clock，超限正常收尾发布 `turn-end status: 'budget'`。检查放在 step 之间，当前 step 会先完整结束，避免留下悬空 tool_call；CLI 与 Web 轨迹标「预算」。
-- **子 agent 可配置**：已实现（核心 + 专用类型）。`task` 新增 `agent`（预设路由）、`model`（同网关的模型分层）、`tools`（最小权限白名单，与父能力取交，绝不越权）；内置预设 `general`（继承父工具/模型）与 `explore`（只读检索，工具收窄到 `read_file/list_files/glob_files/grep_files`，配廉价模型）。子 agent 继承父轮 token/时间预算；并发已实现——同一条回复里的多个委派一起跑，`Semaphore` 按槽位限流（默认 3），事件按调用顺序成块、审批提示一次只问一个；仍为最多一层。`.agent/agents/*.md` 声明式注册表未纳入本轮，留待后续。详见 [subagents.md](./subagents.md)。
+- **子 agent 可配置**：已实现（核心 + 专用类型）。`task` 新增 `agent`（预设路由）、`model`（同网关的模型分层）、`tools`（最小权限白名单，与父能力取交，绝不越权）；内置预设 `general`（继承父工具/模型）与 `explore`（只读检索，工具收窄到 `read_file/list_files/glob_files/grep_files`，配廉价模型）。子 agent 继承父轮 token/时间预算；并发已实现——同一条回复里的多个委派一起跑，`Semaphore` 按槽位限流（默认 3），事件按调用顺序成块、审批提示一次只问一个；仍为最多一层。声明式 `.agent/agents/*.md` 注册表已实现（P3 ⑥）：文件即预设，同名替换内置，每轮重读目录，路由与最小权限语义不变。详见 [subagents.md](./subagents.md) 与 [agent-presets.md](./agent-presets.md)。
 
 ### P1 扩展性
 
@@ -39,7 +39,7 @@ P2 至此全部完成。
 
 ### P3 / P4 与业界差距
 
-工作区 checkpoint、权限规则持久化、编辑容错、子 agent 并发、跨会话记忆已落地（`.agent/memory/*.md` + `remember` 工具，摘要每轮注入系统提示词；`ToolDefinition` 为此新增可选的 `ruleKeyFor` / `summaryFor`，让不带路径参数的工具也能按条目记审批规则）。详见 [memory.md](./memory.md) 与 [roadmap.md](./roadmap.md)。
+工作区 checkpoint、权限规则持久化、编辑容错、子 agent 并发、跨会话记忆、声明式子 agent 预设、内置网页抓取已落地。记忆是 `.agent/memory/*.md` + `remember` 工具，摘要每轮注入系统提示词；`ToolDefinition` 为此新增可选的 `ruleKeyFor` / `summaryFor`，让不带路径参数的工具也能按条目记审批规则。子 agent 预设是 `.agent/agents/*.md`（frontmatter 路由字段 + 正文人格），与记忆同一个每轮刷新时机，共用 `core/frontmatter.ts` 的宽容解析。`web_fetch` 用 Node 自带 fetch 拉单个已知 URL：流式截断到约 1.5MB 停读、HTML 转近似纯文本、跳转逐跳重验 scheme/主机并挡回环与 RFC1918 私网地址（挡不住 DNS 之后才解析到内网的名字，属尽力而为）；WebSearch 未做，需要先定搜索后端。详见 [memory.md](./memory.md)、[agent-presets.md](./agent-presets.md) 与 [roadmap.md](./roadmap.md)。
 
 ## 设计约束
 

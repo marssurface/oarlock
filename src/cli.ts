@@ -12,6 +12,7 @@ import type { AgentEvent } from './core/events.ts'
 import { formatCost } from './core/pricing.ts'
 import type { TokenCost } from './core/pricing.ts'
 import { MEMORY_RELATIVE_DIR, memoryStore } from './core/memory.ts'
+import { SUBAGENT_RELATIVE_DIR, subagentPresets } from './core/subagents.ts'
 import { permissionRules } from './core/rules.ts'
 import { createRuntime } from './core/setup.ts'
 import type { Runtime } from './core/setup.ts'
@@ -149,7 +150,7 @@ function printHelp(): void {
       '  --deny                                    refuse writes/execs',
       '  --help                                    show this text',
       '',
-      'Inside the REPL: /help /new /sessions /resume <id> /rename <title> /fork [keep] [--restore] /delete <id> /memory [name] /forget <name> /exit',
+      'Inside the REPL: /help /new /sessions /resume <id> /rename <title> /fork [keep] [--restore] /delete <id> /memory [name] /forget <name> /agents /exit',
       '',
     ].join('\n'),
   )
@@ -168,6 +169,7 @@ function printCommands(): void {
       color(90, '  /trace          打印当前会话的轨迹'),
       color(90, '  /memory [name]  列出跨会话记忆（给 name 看正文）'),
       color(90, '  /forget <name>  删除一条记忆'),
+      color(90, '  /agents         列出可委派的子 agent 预设（内置 + .agent/agents/*.md）'),
       color(90, '  /exit           退出'),
       '',
     ].join('\n'),
@@ -213,6 +215,27 @@ function printMemory(cwd: string, name: string): void {
   }
   output.write(color(90, `  ${entry.kind} · ${entry.updatedAt}\n`))
   output.write(`${entry.body}\n`)
+}
+
+/** Routable subagent presets: built-in plus `.agent/agents/*.md` in this workspace. */
+function printAgents(cwd: string): void {
+  const presets = subagentPresets(cwd)
+  const fromFiles = presets.filter((preset) => preset.source !== 'builtin')
+  if (fromFiles.length === 0) {
+    output.write(color(90, `  只有内置预设；在 ${SUBAGENT_RELATIVE_DIR}/ 放一个 .md 就能加自己的（frontmatter: name/description/tools/model，正文是角色说明）\n`))
+  }
+  for (const preset of presets) {
+    const details = [
+      preset.tools !== undefined ? `tools: ${preset.tools.join(' ')}` : 'tools: 继承父级',
+      preset.model !== undefined ? `model: ${preset.model}` : undefined,
+      preset.source !== 'builtin' ? preset.source : undefined,
+    ]
+      .filter((part): part is string => part !== undefined)
+      .join(' · ')
+    output.write(`  ${color(36, preset.name)}  ${preset.description}\n`)
+    output.write(color(90, `      ${details}\n`))
+  }
+  output.write(color(90, `  共 ${presets.length} 个 · task 工具用 agent 参数选一个\n`))
 }
 
 /** Render streamed events for a terminal; approval prompts are handled by the gate. */
@@ -558,6 +581,10 @@ async function main(): Promise<void> {
     }
     if (text === '/trace') {
       printTrace(session)
+      continue
+    }
+    if (text === '/agents') {
+      printAgents(config.cwd)
       continue
     }
     if (text === '/memory' || text.startsWith('/memory ')) {

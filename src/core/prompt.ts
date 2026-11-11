@@ -1,4 +1,4 @@
-import { presetCatalog } from './subagents.ts'
+import { presetCatalog, SUBAGENT_RELATIVE_DIR } from './subagents.ts'
 import { MEMORY_RELATIVE_DIR } from './memory.ts'
 
 export interface PromptOptions {
@@ -7,6 +7,10 @@ export interface PromptOptions {
   extra?: string
   /** Rendered index of cross-session notes; see `memorySection`. */
   memory?: string
+  /** Rendered subagent preset catalog; absent means the built-in presets only. */
+  agents?: string
+  /** True when the catalog includes presets defined in `.agent/agents/`. */
+  agentsFromFiles?: boolean
 }
 
 /** The block that carries the note index into a system prompt (main agent and subagents alike). */
@@ -33,9 +37,15 @@ export function buildSystemPrompt(options: PromptOptions): string {
     '- Answer in the language the user uses, be direct and concrete, and skip filler.',
   ]
   if (options.tools.includes('task')) {
+    const catalog = options.agents !== undefined && options.agents.trim().length > 0 ? options.agents.trim() : presetCatalog()
     lines.push(
-      `- Use the task tool for broad, independent work that would flood this conversation. Route it with \`agent\`: ${presetCatalog()}. Pass a cheaper \`model\` for simple searches and the smallest \`tools\` allowlist the job needs. Several independent delegations can go in one message — they run in parallel.`,
+      `- Use the task tool for broad, independent work that would flood this conversation. Route it with \`agent\`: ${catalog}. Pass a cheaper \`model\` for simple searches and the smallest \`tools\` allowlist the job needs. Several independent delegations can go in one message — they run in parallel.`,
     )
+    if (options.agentsFromFiles === true) {
+      lines.push(
+        `- Some of those presets are standing personas the user wrote under \`${SUBAGENT_RELATIVE_DIR}/\`. When one clearly fits the job, route to it instead of re-explaining the role in the prompt.`,
+      )
+    }
   }
   if (options.tools.includes('todo_write')) {
     lines.push(

@@ -1,6 +1,8 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
+import { firstMeaningfulLine, splitFrontmatter } from './frontmatter.ts'
+
 /**
  * Cross-session memory: short notes that outlive one conversation. One markdown
  * file per entry under `.agent/memory/`, so a human can read, edit or delete
@@ -62,37 +64,9 @@ export function memorySlug(raw: string): string {
   return NAME_PATTERN.test(dashed) ? dashed : ''
 }
 
-/**
- * Split an optional `---` frontmatter block from the body. Anything unparseable
- * keeps its text as the body so a hand-written note still gets indexed.
- */
-function splitFrontmatter(text: string): { fields: Record<string, string>; body: string } {
-  const lines = text.split(/\r?\n/)
-  if (lines[0]?.trim() !== '---') return { fields: {}, body: text.trim() }
-  const end = lines.findIndex((line, index) => index > 0 && line.trim() === '---')
-  if (end < 0) return { fields: {}, body: text.trim() }
-  const fields: Record<string, string> = {}
-  for (const line of lines.slice(1, end)) {
-    const separator = line.indexOf(':')
-    if (separator <= 0) continue
-    const key = line.slice(0, separator).trim().toLowerCase()
-    const value = line.slice(separator + 1).trim()
-    if (key.length > 0 && value.length > 0) fields[key] = value
-  }
-  return { fields, body: lines.slice(end + 1).join('\n').trim() }
-}
-
 function normalizeKind(value: string | undefined): MemoryKind {
   const lowered = value?.trim().toLowerCase() ?? ''
   return (MEMORY_KINDS as readonly string[]).includes(lowered) ? (lowered as MemoryKind) : 'fact'
-}
-
-function firstLine(body: string): string {
-  for (const line of body.split(/\r?\n/)) {
-    const text = line.replace(/^#+\s*/, '').replace(/^-\s*/, '').trim()
-    if (text.length > 0) return text
-  }
-  return ''
 }
 
 function serialize(entry: MemoryEntry): string {
@@ -146,7 +120,7 @@ export class MemoryStore {
     return {
       name,
       // A note without a frontmatter description is indexed by its first line.
-      description: description !== '' ? description : firstLine(body),
+      description: description !== '' ? description : firstMeaningfulLine(body),
       kind: normalizeKind(fields['kind']),
       body,
       updatedAt,
@@ -166,7 +140,7 @@ export class MemoryStore {
     const previous = this.read(name)
     const entry: MemoryEntry = {
       name,
-      description: description !== '' ? description : firstLine(body),
+      description: description !== '' ? description : firstMeaningfulLine(body),
       kind: normalizeKind(draft.kind),
       body,
       updatedAt: new Date().toISOString(),

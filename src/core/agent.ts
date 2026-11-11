@@ -18,7 +18,8 @@ import { costOf } from './pricing.ts'
 import type { ModelPricing } from './pricing.ts'
 import { addUsage, estimatedUsage, hasUsage, normalizeUsage, totalTokens } from './usage.ts'
 import { buildSystemPrompt, memorySection } from './prompt.ts'
-import { findPreset } from './subagents.ts'
+import { BUILTIN_PRESETS, findPreset, formatPresetCatalog } from './subagents.ts'
+import type { SubagentPreset } from './subagents.ts'
 import { emptyHooks, runHooks } from './hooks.ts'
 import type { HookOutcome, HooksConfig } from './hooks.ts'
 
@@ -84,6 +85,12 @@ export interface AgentOptions {
    * start of every turn, so a note saved in this turn shows up in the next one.
    */
   memoryIndex?: () => string | undefined
+  /**
+   * The subagent presets this agent can route to (see core/subagents.ts). Also
+   * re-read every turn, so dropping a file in `.agent/agents/` takes effect
+   * without restarting the session. Absent means the built-in presets only.
+   */
+  subagentPresets?: () => SubagentPreset[]
   persistence?: AgentPersistence
   /** Snapshot the workspace before each turn; main agent only, never subagents. */
   checkpoint?: CheckpointHook
@@ -284,6 +291,12 @@ export class Agent {
   private readonly memoryIndexProvider: (() => string | undefined) | undefined
   /** The memory index currently in the system prompt, refreshed at each turn start. */
   private memoryBlock: string | undefined
+  /** Renders the routable subagent presets; absent means the built-in list. */
+  private readonly presetProvider: (() => SubagentPreset[]) | undefined
+  /** The presets currently in the system prompt, refreshed at each turn start. */
+  private presets: SubagentPreset[]
+  /** Rendered preset catalog currently in the prompt; its identity for change detection. */
+  private presetCatalogBlock: string
   /** A caller-supplied prompt wins over the built one, so refreshes leave it alone. */
   private readonly promptOverride: string | undefined
   /** Tool-lifecycle shell hooks, inherited by subagents. */
@@ -330,6 +343,9 @@ export class Agent {
     this.projectInstructions = options.extraInstructions
     this.memoryIndexProvider = options.memoryIndex
     this.memoryBlock = this.readMemoryIndex()
+    this.presetProvider = options.subagentPresets
+    this.presets = this.readPresets()
+    this.presetCatalogBlock = formatPresetCatalog(this.presets)
     this.promptOverride = options.systemPrompt
     this.hooks = options.hooks ?? emptyHooks()
     this.systemMessage = {
@@ -341,6 +357,8 @@ export class Agent {
           tools: this.tools.names(),
           extra: options.extraInstructions,
           memory: this.memoryBlock,
+          agents: this.presetCatalogBlock,
+          agentsFromFiles: this.presets.some((preset) => preset.source !== 'builtin'),
         }),
     }
     this.messages = [this.systemMessage]
@@ -374,26 +392,44 @@ export class Agent {
     }
   }
 
+  /** Same rule for presets: an unreadable `.agent/agents/` falls back to the built-ins. */
+  private readPresets(): SubagentPreset[] {
+    try {
+      return this.presetProvider?.() ?? BUILTIN_PRESETS
+    } catch {
+      return BUILTIN_PRESETS
+    }
+  }
+
   /**
-   * Re-read the note index at turn start so a note saved in the previous turn is
-   * already in the prompt, without restarting the session. An explicit
-   * `systemPrompt` (subagents) owns its own text and is left untouched.
+   * Re-read the note index and the preset list at turn start, so a note saved
+   * or an agent file added in the previous turn is already in the prompt without
+   * restarting the session. An explicit `systemPrompt` (subagents) owns its own
+   * text and is left untouched.
    */
-  private refreshMemory(): void {
-    const next = this.readMemoryIndex()
-    if (next === this.memoryBlock) return
-    this.memoryBlock = next
+  private refreshPromptContext(): void {
+    const nextMemory = this.readMemoryIndex()
+    const nextPresets = this.readPresets()
+    const nextCatalog = formatPresetCatalog(nextPresets)
+    const memoryChanged = nextMemory !== this.memoryBlock
+    const presetsChanged = nextCatalog !== this.presetCatalogBlock
+    if (!memoryChanged && !presetsChanged) return
+    this.memoryBlock = nextMemory
+    this.presets = nextPresets
+    this.presetCatalogBlock = nextCatalog
     if (this.promptOverride !== undefined) return
     this.systemMessage.content = buildSystemPrompt({
       cwd: this.cwd,
       tools: this.tools.names(),
       extra: this.projectInstructions,
-      memory: next,
+      memory: nextMemory,
+      agents: nextCatalog,
+      agentsFromFiles: nextPresets.some((preset) => preset.source !== 'builtin'),
     })
   }
 
   async *run(input: string, signal?: AbortSignal, images: ImagePart[] = []): AsyncGenerator<AgentEvent, void, void> {
-    this.refreshMemory()
+    this.refreshPromptContext()
     // Snapshot before the turn's first message: files are untouched at this
     // point, and subagents inherit the parent's snapshot instead of adding one.
     const checkpoint =
@@ -963,8 +999,15 @@ export class Agent {
   ): Promise<string> {
     if (this.depth >= this.maxDepth) throw new Error('maximum subagent depth reached')
 
-    const preset = findPreset(input.agent ?? 'general')
-    if (preset === undefined) throw new Error(`unknown agent preset: ${input.agent}`)
+    // Preset names are slugs, so routing is case-insensitive.
+    const requested = (input.agent ?? 'general').trim()
+    const presetName = requested.toLowerCase()
+    const preset = findPreset(presetName, this.presets)
+    if (preset === undefined) {
+      throw new Error(
+        `unknown agent preset: ${requested}. Available: ${this.presets.map((candidate) => candidate.name).join(', ')}`,
+      )
+    }
 
     // Least privilege: start from what the parent can actually do (minus the
     // stateful tools the parent owns) and keep only the requested allowlist, so
@@ -980,6 +1023,13 @@ export class Agent {
       allowlist === undefined
         ? parentTools
         : new ToolRegistry(parentTools.list().filter((tool) => allowlist.includes(tool.name)))
+    // A typo in `tools:` would otherwise silently send a child out with no way
+    // to do anything, so say what was asked for and what the parent can give.
+    if (allowlist !== undefined && allowlist.length > 0 && childTools.names().length === 0) {
+      throw new Error(
+        `agent preset ${presetName} allows only ${allowlist.join(', ')}, and none of those is available here (parent has ${parentTools.names().join(', ') || 'no tools'})`,
+      )
+    }
 
     // Model tiering on the same gateway: explicit arg, then the preset hint,
     // then inherit the parent's override; undefined keeps the provider default.
@@ -994,6 +1044,8 @@ export class Agent {
       approvalLock: this.approvalLock,
       hooks: this.hooks,
       tools: childTools,
+      // Same registry for a grandchild, so `maxDepth > 1` still sees the files.
+      ...(this.presetProvider !== undefined ? { subagentPresets: this.presetProvider } : {}),
       context: new ContextManager(this.context.options),
       maxSteps: this.maxSteps,
       maxDepth: this.maxDepth,

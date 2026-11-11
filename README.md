@@ -22,6 +22,8 @@ agent/
 │   │   ├── task.ts            # 子 agent 委派
 │   │   ├── ask.ts             # ask_user 交互式提问
 │   │   ├── todo.ts            # todo_write 计划状态
+│   │   ├── memory.ts          # remember 工具：写/删跨会话记忆（按条目记审批规则）
+│   │   ├── web_fetch.ts       # 内置网页抓取：fetch + 流式截断 + 逐跳跳转校验
 │   │   └── registry.ts        # 工具注册表 → 模型可用的 JSON Schema
 │   ├── core/
 │   │   ├── agent.ts           # Agent 循环（本项目的心脏）
@@ -29,7 +31,9 @@ agent/
 │   │   ├── approval.ts        # ask / auto / deny 审批策略
 │   │   ├── rules.ts           # 「始终允许」规则持久化（.agent/permissions.json）
 │   │   ├── prompt.ts          # 系统提示词
-│   │   ├── subagents.ts       # 子 agent 预设（general / explore）与路由目录
+│   │   ├── subagents.ts       # 子 agent 预设：内置 general / explore + .agent/agents/*.md
+│   │   ├── memory.ts          # 跨会话记忆存储（.agent/memory/*.md，一条一个文件）
+│   │   ├── frontmatter.ts     # `.agent/` 文件共用的 `---` frontmatter 解析（fail-open）
 │   │   ├── instructions.ts    # 读取 AGENTS.md 项目规则，拼进系统提示词
 │   │   ├── hooks.ts           # PreToolUse / PostToolUse shell 钩子（.agent/hooks.json）
 │   │   ├── pricing.ts         # 按模型单价计算成本、按币种聚合
@@ -52,7 +56,7 @@ agent/
 ├── .github/workflows/ci.yml   # CI：typecheck + test + build + bench + 录制回放
 ├── scripts/copy-assets.mjs    # 构建时把 Web 静态页复制进 dist/
 ├── Dockerfile                 # 多阶段构建；运行镜像不含依赖和源码
-└── test/                      # node:test，204 个用例
+└── test/                      # node:test，219 个用例
 ```
 
 ## 快速开始
@@ -105,7 +109,7 @@ node src/cli.ts --trace <session-id>  # 打印该会话的轨迹
 node src/cli.ts --once "解释这个仓库"  # 跑一轮就退出
 ```
 
-REPL 内命令：`/new`、`/sessions`、`/resume <id>`、`/trace`、`/memory [name]`、`/forget <name>`、`/help`、`/exit`。
+REPL 内命令：`/new`、`/sessions`、`/resume <id>`、`/trace`、`/memory [name]`、`/forget <name>`、`/agents`、`/help`、`/exit`。
 
 ## Web 界面
 
@@ -199,9 +203,13 @@ loop step = 1..maxSteps:
 
 **大仓检索**（`tools/ripgrep.ts` + `tools/fs.ts`）：`grep_files` 在检测到 ripgrep 时优先 spawn rg（`--sort=path` 保证与 JS walk 相同的确定顺序），跳过目录、隐藏文件、文件大小上限与输出格式都对齐原有语义；rg 缺失、拒绝模式（如 JS 独有的 lookahead）、超时或输出超限一律回退 JS 全量 walk，工具契约仍是 JavaScript 正则。`AGENT_NO_RG=1` 强制走 JS，`AGENT_RG_PATH` 指定二进制。详见 [docs/search.md](docs/search.md)。
 
+**内置网页抓取**（`tools/web_fetch.ts`）：`web_fetch` 用 Node 自带的 `fetch`（运行时零第三方依赖这条不破）拉单个已知 URL，正文按 chunk 流式读到约 1.5MB 上限就停，HTML 去掉 script/style/标签转成近似纯文本，再按 `maxChars`（默认 5 万字符）截断并在头部报告实际拿到了多少；跳转用 `redirect: 'manual'` 逐跳重验——只允许 http(s)，`localhost`、回环、RFC1918、169.254/16 与 `*.local`/`*.internal` 一律拒（防 SSRF 的尽力而为版，挡不住 DNS 之后才解析到内网的名字），最多 5 跳；超时 30 秒/跳。二进制（image/video/audio/pdf）不解码，只报一行占位。WebSearch 不属于这个工具——它要先定搜索后端，留待后续。
+
 **运行时录制**（`providers/recording.ts` + `core/setup.ts`）：`AGENT_RECORD=1`（或 `AGENT_RECORD_DIR=<目录>`）开启网关调试录制：`createRuntime` 把 provider 包一层，每次模型调用的完整请求与原始事件流（含失败状态、Retry-After、半截流）dump 成 `.agent/recordings/` 下的可读 JSON；压缩与子 agent 复用同一 provider 自动入录，写盘失败 fail-open 不影响对话。与 bench 的指纹录制是两套东西：这个供人排查，不参与回放。详见 [docs/recording.md](docs/recording.md)。
 
-**子 agent**（`tools/task.ts` + `agent.ts` + `core/subagents.ts`）：`task` 工具起一个独立上下文的子 agent，可路由——`agent` 选内置预设（`general` 继承父工具/模型，`explore` 只读检索、工具收窄到读文件类）、`model` 在同一网关做模型分层（简单检索用更便宜的模型）、`tools` 给最小权限白名单（与父能力取交集，绝不越权）。递归靠去掉子集里的 `task` 阻断，默认仍只允许一层；同一条回复里的多个委派并行跑（槽位限流，默认 3），每个委派的活动按调用顺序成块上报。子 agent 继承父轮预算，其审批、工具、助手文本和用量带 `depth` 冒泡到父轨迹并计入父轮合计，但正文不污染父回答。完整链路见 [docs/subagents.md](docs/subagents.md)。
+**子 agent**（`tools/task.ts` + `agent.ts` + `core/subagents.ts`）：`task` 工具起一个独立上下文的子 agent，可路由——`agent` 选预设（`general` 继承父工具/模型，`explore` 只读检索、工具收窄到读文件类）、`model` 在同一网关做模型分层（简单检索用更便宜的模型）、`tools` 给最小权限白名单（与父能力取交集，绝不越权）。递归靠去掉子集里的 `task` 阻断，默认仍只允许一层；同一条回复里的多个委派并行跑（槽位限流，默认 3），每个委派的活动按调用顺序成块上报。子 agent 继承父轮预算，其审批、工具、助手文本和用量带 `depth` 冒泡到父轨迹并计入父轮合计，但正文不污染父回答。完整链路见 [docs/subagents.md](docs/subagents.md)。
+
+**声明式子 agent 预设**（`core/subagents.ts` + `core/frontmatter.ts` + `agent.ts`）：预设不只内置两个——`.agent/agents/<name>.md` 一个文件就是一个常驻角色，frontmatter 写 `description`（路由依据）、`tools` 白名单、可选 `model`，正文就是它的人格。`subagentPresets(cwd)` 把它接在内置之后、同名文件就地替换内置项，`createRuntime` 与记忆同一个时机**每轮重读目录**，所以新增文件不用重启会话。路由语义完全沿用既有的最小权限装配：文件预设拿不到父级没有的工具，也不能写记忆；两处诚实报错——预设名不存在时列出当前真实可用的名字，白名单与父能力交集为空（典型是工具名写错）时直接报错而不是放一个没工具的孩子出去。系统提示词里的预设清单动态生成，只有存在文件预设时才多一句「合适就直接路由，别重述角色」；CLI `/agents` 看同一份目录。文件名不是 slug 的（`README.md`）当人看的说明，不进目录；读取全程 fail-open。详见 [docs/agent-presets.md](docs/agent-presets.md)。
 
 **并行只读与并行委派**（`agent.ts` + `core/semaphore.ts`）：一条消息里连续的 `read` 风险调用（除 `ask_user`、`todo_write`）用 `Promise.all` 并发执行，`task` 委派也加入同批——各子 agent 上下文独立，互不污染。父 agent 用一个计数信号量给并发委派限流（`maxConcurrentSubagents`，env `AGENT_MAX_CONCURRENT_SUBAGENTS`，默认 3），批里的委派先拿槽位再开始执行，所以排队不消耗它自己的工具超时。`tool-call` 事件先按调用顺序发出，结果与缓冲事件再按调用顺序回放，转录消息也按调用顺序入栈，完成先后不影响可读性；两个以上委派同批时，每个委派的嵌套活动先进入该调用的缓冲区、轮到它时一次冲刷，轨迹里是一委派一块而不是互相穿插（单独一个委派仍实时流式）。写/执行/交互类保持串行，`approval-request`/`approval-decision` 永不缓冲，并由一个 1 槽信号量（父与所有子共用）保证「一次只问一件事」——Web 只有一张审批卡、CLI 只有一条 readline。
 
@@ -239,9 +247,10 @@ loop step = 1..maxSteps:
 | `list_files` | read | 目录树，跳过 node_modules/.git 等 |
 | `glob_files` | read | `**/*.ts` 风格匹配 |
 | `grep_files` | read | 正则搜索，`file:line: text`；有 ripgrep 时优先用 rg，失败回退 JS walk |
+| `web_fetch` | read | 拉取单个 http(s) 页面并转成近似纯文本；流式截断 + 逐跳校验跳转，拒绝私有/回环地址 |
 | `remember` | write | 写/删一条跨会话记忆（`.agent/memory/<slug>.md`），审批规则按条目记（子 agent 不可用） |
 | `bash` | exec | `bash -c`（不加载登录 profile），60s 默认超时（超时/中止按错误返回），输出截断 |
-| `task` | read | 委派子 agent 并取回报告；可按 `agent` 预设路由、`model` 分层、`tools` 最小权限白名单，同批多个委派并行（默认 3 路限流） |
+| `task` | read | 委派子 agent 并取回报告；可按 `agent` 预设路由（内置 `general`/`explore`，加上 `.agent/agents/*.md` 里自定义的）、`model` 分层、`tools` 最小权限白名单，同批多个委派并行（默认 3 路限流） |
 | `ask_user` | read | 向用户弹交互式选择卡，答案回灌给模型（子 agent 不可用） |
 | `todo_write` | read | 全量替换当前计划，至多一项 in_progress；发布 `todo` 事件并渲染到轨迹（子 agent 不可用） |
 
@@ -304,12 +313,12 @@ node bench/run.ts --verbose --keep               # 打印工具活动、保留�
 ## 测试
 
 ```bash
-node --test test/*.test.ts   # 204 个用例，约 8s
+node --test test/*.test.ts   # 219 个用例，约 8s
 node bench/run.ts            # 17 个评测任务
 pnpm typecheck               # tsc --noEmit
 ```
 
-覆盖：工具循环、未知工具、并行只读并发与调用顺序、并发委派（同批一起跑与按调用顺序成块、超出槽位先排队、并发子 agent 的审批提示一次只出一个且实时送达、单独委派不被缓冲）、todo_write 计划替换/校验/串行、每轮 token/时间预算 graceful 收尾与 env 解析、审批拒绝、审批放行、步数上限、子 agent、token 估算、按请求记录 usage/首字/耗时、provider 缺 usage 时的估算兜底、子 agent 用量冒泡与父轮合计、子 agent 预设路由（`explore` 只读白名单）、最小权限工具交集不越权、`model` 分层进子请求与事件标签、`request.model` 覆盖与默认回退、未知 `agent` 预设报错、`AGENTS.md` 项目规则读取（存在/缺失/空白）与合并顺序、`createRuntime` 把规则拼进系统提示词、子 agent 继承父级项目规则、工具钩子解释器（exit2/JSON block/allow/中性 context、非零与超时 fail-open、matcher 通配与精确、stdin 携带调用、readHooks 存在/缺失/非法）、PreToolUse 拦截阻止执行与 allow 跳过审批但 deny 优先、PostToolUse 把成功结果标错回灌、MCP 配置校验（非法名/缺 command 丢弃、非法 risk 只丢字段）、假 stdio 服务器握手与 `tools/list` / `tools/call` 映射、坏服务器与超时 fail-open、`createRuntime` 合并 extraTools 且跳过重名、摘要压缩与压缩请求记账、压缩后会话恢复、SSE 流解析（文本/推理/工具调用/usage/DeepSeek 缓存字段）、HTTP 错误、路径越界、危险命令、glob/grep/edit 边界、瞬时错误重试与「已输出后不重试」、录制/回放与请求指纹、工具超时按错误上报、超长输出截断（含落盘的历史消息）、会话 token 汇总与旧轨迹回退、轨迹面板 DOM（jsdom 里点开轨迹断言轮次/请求/用户/助手/工具/Token 列/检查器用量与累计，以及实时 SSE 追加后的汇总更新）、全局模型切换（发送框菜单只列已启用清单、点选即全局生效、设置面板左导航+右内容且模型板块预设/详情两栏、启用/使用/移除清单、预设快捷填充、刷新后下拉列出全部模型、密钥不回显、Esc 关闭）、外观板块主题即时切换与跟随系统、`/api/settings`（持久化、空闲会话立即重建 runtime、非法输入 400）、按端点保存 Key 与 `keyed` 列表、`/api/settings/enabled`（登记/移除不改动当前模型、重复登记保持顺序、清空后不复活、GET 不携带密钥）、`/api/settings/models`（读取厂商 `/models`、401/超时按 502 上报）、图片输入（content parts 文本/图片读取、OpenAI `image_url` 线格式、`run()` 附件与 `turn-start.attachments`、无图保持字符串、每图 1200 token 估算与摘要占位符不泄漏 base64、会话 parts 持久化与纯图片标题、图片-only SSE 回合、附件 API 400/413 校验矩阵、历史缩略图渲染、模型能力门控附件按钮、成本核算（计价公式与缓存切分、无缓存价回退、解析校验、同名模型端点优先、单价持久化/保留/显式清除、设置 API 往返、`usage` 事件成本快照、轨迹按币种聚合、设置面板单价回显与清空、已启用列表徽标、轨迹与会话列表成本展示、会话管理（store 重命名保留 mtime 与清空回退、同毫秒时间戳按 id 兜底排序、删除转录与轨迹、分支前缀/全量/空分支/越界校验、PATCH/DELETE/fork API 与运行中 409、侧栏菜单内联重命名与二次确认删除、用户消息分支预填）、Retry-After 头解析（秒数/三种 HTTP-date/垃圾值）与重试延迟取大封顶、grep_files ripgrep 优先（参数映射、结果上限、拒绝模式与坏路径回退、后端开关、真 rg 与 JS walk 输出一致）、运行时录制开关（目录解析与优先级、请求/事件落盘、失败记录重抛、写盘 fail-open、createRuntime 按开关包装）、工作区快照（快照/恢复往返、空工作区锚点、排除目录不动、未知快照拒绝、无 git 与开关关闭降级、每主轮一次且子 agent 不拍、压缩轨迹后缀对齐与文本漂移 fail-safe、fork `restoreFiles` 端到端与无快照回退、Web 两次点击确认与回执）、权限规则持久化（宽容读取缺失/损坏/重复文件、add/remove/clear 落盘与跨实例读取、规则门禁预检与 always 记忆、无 store 保留内存语义、`/api/settings` 返回规则、单条移除/清空 API 与非法输入 400、设置权限板块列表与二次确认清空、edit 空白容错（精确优先与整行唯一回退、最短片段门槛、行内空白不等价、逐行与统一缩进重映射、CRLF 保持、tab 与空格不强改、审批 diff 与执行同源）、跨会话记忆（frontmatter 往返、手写与损坏文件降级索引、slug 归一并挡住目录穿越、同名覆盖、空/超长正文拒绝且原文件不动、索引上限与省略提示、`remember` 各分支、按条目的审批规则键、本轮写入下轮进入系统提示词、`memoryIndex` 抛错不拖垮回合、子 agent 能看不能写））。
+覆盖：工具循环、未知工具、并行只读并发与调用顺序、并发委派（同批一起跑与按调用顺序成块、超出槽位先排队、并发子 agent 的审批提示一次只出一个且实时送达、单独委派不被缓冲）、todo_write 计划替换/校验/串行、每轮 token/时间预算 graceful 收尾与 env 解析、审批拒绝、审批放行、步数上限、子 agent、token 估算、按请求记录 usage/首字/耗时、provider 缺 usage 时的估算兜底、子 agent 用量冒泡与父轮合计、子 agent 预设路由（`explore` 只读白名单）、最小权限工具交集不越权、`model` 分层进子请求与事件标签、`request.model` 覆盖与默认回退、未知 `agent` 预设报错、`AGENTS.md` 项目规则读取（存在/缺失/空白）与合并顺序、`createRuntime` 把规则拼进系统提示词、子 agent 继承父级项目规则、工具钩子解释器（exit2/JSON block/allow/中性 context、非零与超时 fail-open、matcher 通配与精确、stdin 携带调用、readHooks 存在/缺失/非法）、PreToolUse 拦截阻止执行与 allow 跳过审批但 deny 优先、PostToolUse 把成功结果标错回灌、MCP 配置校验（非法名/缺 command 丢弃、非法 risk 只丢字段）、假 stdio 服务器握手与 `tools/list` / `tools/call` 映射、坏服务器与超时 fail-open、`createRuntime` 合并 extraTools 且跳过重名、摘要压缩与压缩请求记账、压缩后会话恢复、SSE 流解析（文本/推理/工具调用/usage/DeepSeek 缓存字段）、HTTP 错误、路径越界、危险命令、glob/grep/edit 边界、瞬时错误重试与「已输出后不重试」、录制/回放与请求指纹、工具超时按错误上报、超长输出截断（含落盘的历史消息）、会话 token 汇总与旧轨迹回退、轨迹面板 DOM（jsdom 里点开轨迹断言轮次/请求/用户/助手/工具/Token 列/检查器用量与累计，以及实时 SSE 追加后的汇总更新）、全局模型切换（发送框菜单只列已启用清单、点选即全局生效、设置面板左导航+右内容且模型板块预设/详情两栏、启用/使用/移除清单、预设快捷填充、刷新后下拉列出全部模型、密钥不回显、Esc 关闭）、外观板块主题即时切换与跟随系统、`/api/settings`（持久化、空闲会话立即重建 runtime、非法输入 400）、按端点保存 Key 与 `keyed` 列表、`/api/settings/enabled`（登记/移除不改动当前模型、重复登记保持顺序、清空后不复活、GET 不携带密钥）、`/api/settings/models`（读取厂商 `/models`、401/超时按 502 上报）、图片输入（content parts 文本/图片读取、OpenAI `image_url` 线格式、`run()` 附件与 `turn-start.attachments`、无图保持字符串、每图 1200 token 估算与摘要占位符不泄漏 base64、会话 parts 持久化与纯图片标题、图片-only SSE 回合、附件 API 400/413 校验矩阵、历史缩略图渲染、模型能力门控附件按钮、成本核算（计价公式与缓存切分、无缓存价回退、解析校验、同名模型端点优先、单价持久化/保留/显式清除、设置 API 往返、`usage` 事件成本快照、轨迹按币种聚合、设置面板单价回显与清空、已启用列表徽标、轨迹与会话列表成本展示、会话管理（store 重命名保留 mtime 与清空回退、同毫秒时间戳按 id 兜底排序、删除转录与轨迹、分支前缀/全量/空分支/越界校验、PATCH/DELETE/fork API 与运行中 409、侧栏菜单内联重命名与二次确认删除、用户消息分支预填）、Retry-After 头解析（秒数/三种 HTTP-date/垃圾值）与重试延迟取大封顶、grep_files ripgrep 优先（参数映射、结果上限、拒绝模式与坏路径回退、后端开关、真 rg 与 JS walk 输出一致）、运行时录制开关（目录解析与优先级、请求/事件落盘、失败记录重抛、写盘 fail-open、createRuntime 按开关包装）、工作区快照（快照/恢复往返、空工作区锚点、排除目录不动、未知快照拒绝、无 git 与开关关闭降级、每主轮一次且子 agent 不拍、压缩轨迹后缀对齐与文本漂移 fail-safe、fork `restoreFiles` 端到端与无快照回退、Web 两次点击确认与回执）、权限规则持久化（宽容读取缺失/损坏/重复文件、add/remove/clear 落盘与跨实例读取、规则门禁预检与 always 记忆、无 store 保留内存语义、`/api/settings` 返回规则、单条移除/清空 API 与非法输入 400、设置权限板块列表与二次确认清空、edit 空白容错（精确优先与整行唯一回退、最短片段门槛、行内空白不等价、逐行与统一缩进重映射、CRLF 保持、tab 与空格不强改、审批 diff 与执行同源）、跨会话记忆（frontmatter 往返、手写与损坏文件降级索引、slug 归一并挡住目录穿越、同名覆盖、空/超长正文拒绝且原文件不动、索引上限与省略提示、`remember` 各分支、按条目的审批规则键、本轮写入下轮进入系统提示词、`memoryIndex` 抛错不拖垮回合、子 agent 能看不能写）、声明式子 agent 预设（frontmatter 与别名解析、缺字段回退、非法名/越界/超大文件与 `README.md` 不进目录、同名文件就地替换内置、经 `task` 路由时人格/白名单/模型三者都落到子请求、未知名报错列出可用预设、白名单与父能力无交集时报错、回合中新文件进入下一轮提示词、提供函数抛错回退内置且回合不中断））。
 
 ## CI
 

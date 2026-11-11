@@ -55,7 +55,7 @@ Memory from earlier sessions, one markdown file per note under `.agent/memory/`:
 ## 人在中间怎么管
 
 - `/memory` 列出全部（名字 / kind / 摘要），`/memory <name>` 打印正文，`/forget <name>` 删一条。
-- 文件就是普通 markdown，直接编辑、`git` 之外的任何方式整理都行；改坏了也不会炸——读不出 frontmatter 的文件按「第一行当摘要、kind 当 fact」继续索引。
+- 文件就是普通 markdown，直接编辑、`git` 之外的任何方式整理都行；改坏了也不会炸——读不出 frontmatter 的文件按「第一行当摘要、kind 当 fact」继续索引。`---` 块的解析抽在 `core/frontmatter.ts`，与 `.agent/agents/*.md` 预设（见 [agent-presets.md](./agent-presets.md)）共用同一套宽容语义。
 - `.agent/` 整体在 `.gitignore` 里，**记忆不会跟着仓库提交**：它是这台机器、这个工作目录的状态，换一台机器不该带过去。想沉淀成团队共享的约定，应该写进 `AGENTS.md` 或 `docs/`。
 
 ## 边界

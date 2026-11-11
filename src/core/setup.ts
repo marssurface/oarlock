@@ -10,6 +10,7 @@ import { Agent } from './agent.ts'
 import { checkpointDisabled, checkpointManager } from './checkpoint.ts'
 import { composeInstructions, readProjectInstructions } from './instructions.ts'
 import { memoryStore } from './memory.ts'
+import { subagentPresets } from './subagents.ts'
 import { pricingResolver } from './pricing.ts'
 import { ContextManager } from './context.ts'
 import type { AgentEvent } from './events.ts'
@@ -92,6 +93,9 @@ export function createRuntime(config: AppConfig, session: Session, options: Runt
     onEvent,
     // Notes from earlier sessions; re-read every turn so this turn's writes land next turn.
     memoryIndex: () => memoryStore(config.cwd).index(),
+    // `.agent/agents/*.md` plus the built-ins; re-read every turn, so adding a
+    // specialist mid-session is enough for the next delegation to route to it.
+    subagentPresets: () => subagentPresets(config.cwd),
     ...(instructions !== undefined ? { extraInstructions: instructions } : {}),
     persistence: {
       onMessage: (message) => session.append(message),

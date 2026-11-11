@@ -23,7 +23,18 @@ export { loadMcpServers, McpClient, McpError, parseMcpConfig, readMcpConfig, emp
 export type { McpConfig, McpServerConfig, McpLoadResult, McpToolInfo, McpCallResult, McpContentBlock } from './mcp/index.ts'
 export { costOf, formatCost, parsePricing, pricingResolver } from './core/pricing.ts'
 export type { ModelPricing, PriceCurrency, TokenCost } from './core/pricing.ts'
-export { SUBAGENT_PROMPT, SUBAGENT_PRESETS, findPreset, presetCatalog } from './core/subagents.ts'
+export {
+  BUILTIN_PRESETS,
+  SUBAGENT_PRESETS,
+  SUBAGENT_PROMPT,
+  SUBAGENT_RELATIVE_DIR,
+  fileSubagentPresets,
+  findPreset,
+  formatPresetCatalog,
+  parseSubagentFile,
+  presetCatalog,
+  subagentPresets,
+} from './core/subagents.ts'
 export type { SubagentPreset } from './core/subagents.ts'
 export type { AgentEvent } from './core/events.ts'
 export { createRuntime } from './core/setup.ts'
@@ -70,6 +81,7 @@ export { fileTools, resolveInside } from './tools/fs.ts'
 export { bashTool, runShell } from './tools/bash.ts'
 export { taskTool, TASK_TOOL_NAME } from './tools/task.ts'
 export { rememberTool, MEMORY_TOOL_NAME } from './tools/memory.ts'
+export { webFetchTool, WEB_FETCH_TOOL_NAME, isPrivateHost } from './tools/web_fetch.ts'
 export type { ApprovalDecision, ApprovalGate, ApprovalRequest, Risk, ToolContext, ToolDefinition, ToolResult } from './tools/types.ts'
 
 export { Session, SessionStore } from './session/store.ts'

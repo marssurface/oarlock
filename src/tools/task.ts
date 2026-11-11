@@ -19,7 +19,7 @@ export const taskTool: ToolDefinition = {
     {
       description: { type: 'string', description: 'Short task name, 3-5 words.' },
       prompt: { type: 'string', description: 'Complete instructions for the subagent; it cannot see this conversation.' },
-      agent: { type: 'string', description: 'Preset to route to: "explore" (read-only search) or "general" (default, may edit/run).' },
+      agent: { type: 'string', description: 'Preset to route to. Built-ins are "explore" (read-only search) and "general" (default, may edit/run); the system prompt lists any extra presets this workspace defines under .agent/agents/.' },
       model: { type: 'string', description: 'Model name for the subagent on the same gateway; use a cheaper model for simple searches.' },
       tools: {
         type: 'array',

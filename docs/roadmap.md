@@ -11,9 +11,9 @@
 | 编辑可靠性 | apply_patch 上下文匹配 + fuzzy fallback、多处编辑原子化 | 精确优先 + 受控 whitespace fallback（唯一整行匹配，diff 预览同源）；仍无 apply_patch 式上下文补丁与 `multi_edit` 原子批量 |
 | 权限与沙箱 | 规则持久化、模式化 allow/deny、OS 级沙箱（Seatbelt/Landlock） | 规则已按工作目录持久化（设置可查可清）；bash 仍靠灾难命令黑名单，无 OS 隔离 |
 | 记忆与索引 | 跨会话 auto-memory、项目知识沉淀、repo wiki | 已实现跨会话记忆：`.agent/memory/*.md` 一条一个文件，摘要每轮注入系统提示词，`remember` 工具写入/删除，按条目记审批规则。仍无自动沉淀（只记模型主动写的）、无用户级/全局层、无仓库知识索引 |
-| 后台与并发 | 后台长任务、并行子 agent、任务间消息 | 同一轮多个委派并行执行（信号量限流，默认 3）；仍无后台长任务、任务间通信，bash 每次新进程无状态 |
+| 后台与并发 | 后台长任务、并行子 agent、任务间消息 | 同一轮多个委派并行执行（信号量限流，默认 3），子 agent 预设可声明在 `.agent/agents/*.md`；仍无后台长任务、任务间通信，bash 每次新进程无状态 |
 | 协议与缓存 | Anthropic/Gemini 原生适配、主动 prompt cache 布局 | 仅 OpenAI 兼容线格式，缓存靠网关自动命中 |
-| 内置网络工具 | WebSearch/WebFetch/浏览器自动化一等工具 | 无内置网络能力，靠 MCP 外挂 |
+| 内置网络工具 | WebSearch/WebFetch/浏览器自动化一等工具 | `web_fetch` 已实现（Node 自带 fetch，流式截断 + 逐跳跳转校验 + SSRF 尽力守卫，见 ⑦）；WebSearch 仍缺——需要先定一个搜索后端 |
 
 「有但浅」的几处：压缩是启发式估算 + 摘要（先进做法保留文件状态做结构化微压缩）；bench 是 17 个合成任务，缺 SWE-bench 式真实仓库评测；无 IDE 集成、无 git 工作流（自动提交/PR）、无插件/技能生态。
 
@@ -49,7 +49,7 @@
 
 `task` 支持同一轮多个委派并行执行（信号量限流，默认 3），事件与转录仍按调用顺序输出；继承每轮预算不变。
 
-落地细节：`task` 加入同批执行资格（只读工具与委派都不干扰彼此状态，`ask_user`/`todo_write` 仍串行），批量结果与转录沿用既有的按调用顺序落盘。限流是 `core/semaphore.ts` 的计数信号量，父 agent 一份 `maxConcurrentSubagents`（`AGENT_MAX_CONCURRENT_SUBAGENTS`，默认 3），批里的委派先拿槽位再开始计时，所以排队不消耗它自己的工具超时；预算继承与最小权限装配不变。事件顺序用「按调用缓冲再冲刷」：批量里有 ≥2 个委派时，每个调用的嵌套活动（子 agent 事件、起止标记、重试）先进入该调用的缓冲区，轮到它时一次冲刷，渲染端一委派一块；单个委派仍实时流式。`approval-request`/`approval-decision` 永不缓冲，并且 `approvalLock`（1 槽信号量，父与所有子共用）把「发问—等回答」串成一次一个——Web 只有一张审批卡、CLI 只有一条 readline。没有新增事件类型，协议与旧轨迹不受影响。细节与边界见 [subagents.md](./subagents.md)。声明式 `.agent/agents/*.md` 注册表仍未做。
+落地细节：`task` 加入同批执行资格（只读工具与委派都不干扰彼此状态，`ask_user`/`todo_write` 仍串行），批量结果与转录沿用既有的按调用顺序落盘。限流是 `core/semaphore.ts` 的计数信号量，父 agent 一份 `maxConcurrentSubagents`（`AGENT_MAX_CONCURRENT_SUBAGENTS`，默认 3），批里的委派先拿槽位再开始计时，所以排队不消耗它自己的工具超时；预算继承与最小权限装配不变。事件顺序用「按调用缓冲再冲刷」：批量里有 ≥2 个委派时，每个调用的嵌套活动（子 agent 事件、起止标记、重试）先进入该调用的缓冲区，轮到它时一次冲刷，渲染端一委派一块；单个委派仍实时流式。`approval-request`/`approval-decision` 永不缓冲，并且 `approvalLock`（1 槽信号量，父与所有子共用）把「发问—等回答」串成一次一个——Web 只有一张审批卡、CLI 只有一条 readline。没有新增事件类型，协议与旧轨迹不受影响。细节与边界见 [subagents.md](./subagents.md)。声明式 `.agent/agents/*.md` 注册表见 ⑥。
 
 ### ⑤ 跨会话记忆（已完成）
 
@@ -62,9 +62,32 @@
 - 人的入口：CLI `/memory [name]` 与 `/forget <name>`；文件本身是普通 markdown，`.agent/` 已被 gitignore，所以记忆是这台机器这个目录的状态，不会随仓库提交。
 - 未做（有意）：自动沉淀（每轮多花一次模型调用，且噪声多）、失效时间、用户级/全局记忆层。完整语义与边界见 [memory.md](./memory.md)。
 
+### ⑥ 声明式子 agent 注册表（已完成）
+
+内置的 `general` / `explore` 够通用，但不了解你的项目。把「只有这个仓库才知道的角色」写成文件：`.agent/agents/<name>.md`，frontmatter 是路由字段（`description` / `tools` / 可选 `model`），正文就是这个子 agent 的人格。
+
+- `core/subagents.ts`：`subagentPresets(cwd)` = 内置 + 目录里的文件预设，同名文件**就地替换**内置项，其余按名字排在内置之后；`parseSubagentFile` 复用与记忆同一套 frontmatter 解析（抽到 `core/frontmatter.ts`）。文件名不是 slug 的（`README.md`）视为给人看的说明，不进目录。
+- 刷新时机与记忆一致：`createRuntime` 传 `subagentPresets: () => subagentPresets(cwd)`，Agent **每轮开始重读**，系统提示词里的预设清单跟着变——新增或改文件不用重启会话。读不出、frontmatter 坏、名字非法、文件超大一律跳过；提供函数本身抛错退回内置。
+- 委派语义一字未改：仍是「父能力去掉 `task`/`ask_user`/`todo_write`/`remember`，再与白名单取交集」，文件预设拿不到父级没有的工具，也不能写记忆；模型优先级仍是显式 `model` > 预设 `model` > 继承父级。
+- 两处诚实报错，避免「配了但什么都不做」：预设名不存在时列出这个目录真实可用的名字；白名单与父能力交集为空（典型是工具名写错，如 `read_filez`）时报错说明它只允许什么、父级实际有什么，而不是放一个没有工具的孩子出去。
+- 人的入口：CLI `/agents` 列出同一份目录，标注来源、工具白名单与模型。
+- 未做（有意）：预设之间嵌套（循环与不可见的权限放大）、Web 设置面板里的预设管理。完整格式与边界见 [agent-presets.md](./agent-presets.md)。
+
+### ⑦ 内置网页抓取 web_fetch（已完成）
+
+补上「模型想读一个网页却没有网络能力」的缺口，但只做**抓取**不做**搜索**——搜索必须先定一个后端（API key 服务 vs keyless 抓取不稳），留待后续。
+
+- `tools/web_fetch.ts`：`risk: 'read'`，只读工具不过审批；用 Node ≥22 自带的全局 `fetch`，运行时零第三方依赖这条不破。参数只有 `url`（必填）和 `maxChars`（默认 50_000，封顶 200_000）。
+- **流式截断**：响应体按 chunk 读，到约 1.5MB（随 `maxChars` 浮动、硬顶 8MB）就 `reader.cancel()`，不整包缓冲——大页面不会把内存或上下文拖垮；返回头部报告实际字节数、字符数与转换方式。
+- **跳转逐跳重验**：`redirect: 'manual'`，最多 5 跳；每一跳重新校验 scheme 与主机，所以一个 302 到 `http://169.254.169.254/` 会被拒掉而不是静默跟随。
+- **SSRF 尽力守卫**：`isPrivateHost()` 挡 `localhost`、`*.local`/`*.internal`、回环、RFC1918、169.254/16、CGNAT、IPv6 `::1`；诚实边界是它挡不住「名字在 DNS 之后才解析到内网」的情况（`fetch` 不暴露解析结果），只挡 URL 里直接写死的私网地址。
+- **HTML 转近似纯文本**：去 doctype/script/style/注释 → 块级标签转换行 → 其余标签剥掉 → 实体反转义 → 折叠空白。刻意不做全量 HTML 解析器，布局与交互内容丢失就是「当文本读」的意思。image/video/audio/pdf 与探测到的二进制直接一行占位，不解码。
+- 复用既有超时语义：`AbortSignal.timeout(30s)`/跳，与父 `ctx.signal` 组合，超时/中断按错误文本返回给模型。
+- WebSearch（需要搜索后端）与浏览器自动化（要无头浏览器）有意未做。
+
 ### 暂不排期
 
-剩下的差距工程量都不小，各自单独立项。按通用定位排序（谁离「任何任务都用得上」更近谁在前）：后台长任务与任务间通信、内置网络工具（WebSearch / WebFetch / 浏览器）在前；OS 沙箱、原生 Anthropic/Gemini 协议是可靠性与覆盖面，随后；纯编码场景专属的代码智能（LSP / tree-sitter / 仓库索引）与 IDE 集成排在最后——对写代码收益大，但不扩展 runtime 的通用能力边界。`.agent/agents/*.md` 声明式子 agent 注册表属于通用能力，工程量可控，可以插队。记忆里还差的两步——自动沉淀与用户级作用域——也属通用能力，等真实用过一段再决定。
+剩下的差距工程量都不小，各自单独立项。按通用定位排序（谁离「任何任务都用得上」更近谁在前）：后台长任务与任务间通信、内置网络工具里的 WebSearch / 浏览器自动化（`web_fetch` 已在 ⑦ 落地）在前；OS 沙箱、原生 Anthropic/Gemini 协议是可靠性与覆盖面，随后；纯编码场景专属的代码智能（LSP / tree-sitter / 仓库索引）与 IDE 集成排在最后——对写代码收益大，但不扩展 runtime 的通用能力边界。记忆里还差的两步——自动沉淀与用户级作用域——属通用能力，等真实用过一段再决定；跨会话记忆与预设目录的 Web 管理入口同理。
 
 ## 设计约束（沿用）
 

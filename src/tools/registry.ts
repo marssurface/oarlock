@@ -7,6 +7,7 @@ import { taskTool } from './task.ts'
 import { todoTool } from './todo.ts'
 import { toolSpec } from './types.ts'
 import type { ToolDefinition } from './types.ts'
+import { webFetchTool } from './web_fetch.ts'
 
 /** Ordered, name-addressed tool set; the agent renders its `specs()` for the model. */
 export class ToolRegistry {
@@ -49,7 +50,7 @@ export class ToolRegistry {
   }
 
   static default(options: { allowShell?: boolean; includeTask?: boolean } = {}): ToolRegistry {
-    const tools: ToolDefinition[] = [...fileTools, rememberTool, todoTool, askTool]
+    const tools: ToolDefinition[] = [...fileTools, rememberTool, todoTool, askTool, webFetchTool()]
     if (options.allowShell !== false) tools.push(bashTool)
     if (options.includeTask !== false) tools.push(taskTool)
     return new ToolRegistry(tools)
