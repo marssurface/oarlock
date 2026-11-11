@@ -12,7 +12,8 @@ agent/
 │   │   ├── types.ts           # ChatProvider 接口与消息/事件协议（content parts）
 │   │   ├── content.ts         # 文本/图片片段读取、data URL 与消息组装
 │   │   ├── openai-compatible.ts  # DeepSeek / OpenAI / Ollama / 任意兼容网关
-│   │   ├── anthropic.ts         # Anthropic Messages 原生线（provider: 'anthropic'）
+│   │   ├── anthropic.ts         # Anthropic Messages 原生线（provider: 'anthropic'，默认主动 prompt cache）
+│   │   ├── gemini.ts            # Gemini generateContent 原生线（provider: 'gemini'）
 │   │   ├── recording.ts         # 可选运行时录制（AGENT_RECORD，网关调试用）
 │   │   └── mock.ts            # 无 key 也能跑通的假模型
 │   ├── tools/
@@ -57,7 +58,7 @@ agent/
 ├── .github/workflows/ci.yml   # CI：typecheck + test + build + bench + 录制回放
 ├── scripts/copy-assets.mjs    # 构建时把 Web 静态页复制进 dist/
 ├── Dockerfile                 # 多阶段构建；运行镜像不含依赖和源码
-└── test/                      # node:test，224 个用例
+└── test/                      # node:test，235 个用例
 ```
 
 ## 快速开始
@@ -95,6 +96,11 @@ DEEPSEEK_API_KEY=sk-...
 # AGENT_MODEL=deepseek-v4.1-flash-economy
 # AGENT_PROVIDER=ollama        # 本地，无需 key
 # OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
+# 原生协议（非 OpenAI 兼容线）：
+# AGENT_PROVIDER=anthropic
+# ANTHROPIC_API_KEY=sk-ant-...
+# AGENT_PROVIDER=gemini
+# GEMINI_API_KEY=...           # 或 GOOGLE_API_KEY
 ```
 
 启动后终端显示 `deepseek/deepseek-chat · … · approval=ask`，即为接入成功。
@@ -314,7 +320,7 @@ node bench/run.ts --verbose --keep               # 打印工具活动、保留�
 ## 测试
 
 ```bash
-node --test test/*.test.ts   # 224 个用例，约 8s
+node --test test/*.test.ts   # 235 个用例，约 8s
 node bench/run.ts            # 17 个评测任务
 pnpm typecheck               # tsc --noEmit
 ```
@@ -368,7 +374,7 @@ docker run --rm -p 4173:4173 --entrypoint node oarlock \
 ## 已知限制
 
 - token 估算和缺 usage 时的兜底都是启发式的，不接 tiktoken；长上下文场景建议按模型实际窗口调 `AGENT_CONTEXT_WINDOW`。真实用量以 provider 返回的 `usage` 为准，轨迹里带 `~` 的行是估算值。
-- 缓存只记录 provider 明确上报的命中量（DeepSeek `prompt_cache_hit_tokens` / OpenAI `prompt_tokens_details.cached_tokens`）；DeepSeek/OpenAI 不报 cache write，因此不伪造该字段。
+- 缓存只记录 provider 明确上报的命中量（DeepSeek `prompt_cache_hit_tokens` / OpenAI `prompt_tokens_details.cached_tokens` / Anthropic `cache_read_input_tokens` / Gemini `cachedContentTokenCount`）；不报 cache write 的厂商不伪造该字段。Anthropic 原生线默认主动布置 `cache_control` 断点（系统/工具/历史前缀），可用 `promptCache: false` 关闭；Gemini 显式 `cachedContent` 未做。
 - 连续的只读工具与 `task` 委派会并发执行（委派默认 3 路并发），写/执行/交互类（`ask_user`、`todo_write`）仍串行；事件与转录按模型调用顺序输出，一次只问一个审批。
 - Web 端一次只跑一个 turn，不支持同一会话并发。
 - 没有做流式 markdown 渲染，正文按纯文本展示。

@@ -23,6 +23,13 @@ export interface AnthropicOptions {
   fetchImpl?: typeof fetch
   /** Extra request-body fields merged last (provider flags). */
   bodyDefaults?: Record<string, unknown>
+  /**
+   * Place `cache_control` breakpoints on the stable prefix (tools, system,
+   * history before the newest turn). On by default; set false to send the plain
+   * wire shape. Breakpoints below the model's minimum cacheable size are ignored
+   * by the API, so this is safe for short prompts too.
+   */
+  promptCache?: boolean
 }
 
 type ContentBlock = Record<string, unknown>
@@ -96,6 +103,7 @@ export class AnthropicProvider implements ChatProvider {
   private readonly headers: Record<string, string>
   private readonly fetchImpl: typeof fetch
   private readonly bodyDefaults: Record<string, unknown>
+  private readonly promptCache: boolean
 
   constructor(options: AnthropicOptions) {
     this.id = options.id
@@ -105,6 +113,7 @@ export class AnthropicProvider implements ChatProvider {
     this.headers = options.headers ?? {}
     this.fetchImpl = options.fetchImpl ?? fetch
     this.bodyDefaults = options.bodyDefaults ?? {}
+    this.promptCache = options.promptCache ?? true
   }
 
   private endpoint(): string {
@@ -113,13 +122,22 @@ export class AnthropicProvider implements ChatProvider {
 
   async *stream(request: ProviderRequest): AsyncGenerator<ProviderEvent> {
     const { system, messages } = splitSystem(request.messages)
+    const tools = (request.tools ?? []).map(toTool)
+    if (this.promptCache) markCacheBreakpoints(tools, messages)
+    // The system string becomes a single text block so it can carry a breakpoint.
+    const systemField =
+      system === undefined || system === ''
+        ? undefined
+        : this.promptCache
+          ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }]
+          : system
     const body: Record<string, unknown> = {
       model: request.model ?? this.model,
       max_tokens: request.maxTokens ?? 4096,
       messages,
       stream: true,
-      ...(system !== undefined && system !== '' ? { system } : {}),
-      ...(request.tools !== undefined && request.tools.length > 0 ? { tools: request.tools.map(toTool) } : {}),
+      ...(systemField !== undefined ? { system: systemField } : {}),
+      ...(tools.length > 0 ? { tools } : {}),
       ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
       ...this.bodyDefaults,
     }
@@ -317,6 +335,25 @@ function toTool(spec: ToolSpec): ContentBlock {
     description: spec.description,
     input_schema: spec.parameters,
   }
+}
+
+/**
+ * Anthropic caches the longest matching prefix up to a `cache_control`
+ * breakpoint (at most four). We mark the end of the tools list and the turn
+ * before the newest one; the system block is marked in `stream`. Together these
+ * cache the stable prefix while leaving only the latest turn fresh, and the
+ * prefix breakpoint advances each step so earlier cache entries still hit.
+ */
+function markCacheBreakpoints(tools: ContentBlock[], messages: ContentBlock[][]): void {
+  const lastTool = tools[tools.length - 1]
+  if (lastTool !== undefined) markCache(lastTool)
+  const prefix = messages[messages.length - 2]
+  const lastBlock = prefix?.[prefix.length - 1]
+  if (lastBlock !== undefined) markCache(lastBlock)
+}
+
+function markCache(block: ContentBlock): void {
+  block.cache_control = { type: 'ephemeral' }
 }
 
 function toImageBlock(image: ImagePart): ContentBlock {

@@ -56,7 +56,7 @@ test('system prompt is split out and user turn is wrapped in messages', async ()
     { type: 'message_stop' },
   ]
   const { impl, sent } = fakeFetch(events)
-  const provider = new AnthropicProvider({ id: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-test', fetchImpl: impl })
+  const provider = new AnthropicProvider({ id: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-test', fetchImpl: impl, promptCache: false })
 
   const got: ProviderEvent[] = []
   for await (const event of provider.stream(makeRequest())) got.push(event)
@@ -93,7 +93,7 @@ test('tool calls stream across content_block_start and input_json_delta', async 
     { type: 'message_stop' },
   ]
   const { impl } = fakeFetch(events)
-  const provider = new AnthropicProvider({ id: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-test', fetchImpl: impl })
+  const provider = new AnthropicProvider({ id: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-test', fetchImpl: impl, promptCache: false })
 
   const got: ProviderEvent[] = []
   for await (const event of provider.stream(makeRequest())) got.push(event)
@@ -115,7 +115,7 @@ test('assistant turns with tool_use and tool_result messages map back into the w
     { type: 'message_stop' },
   ]
   const { impl, sent } = fakeFetch(events)
-  const provider = new AnthropicProvider({ id: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-test', fetchImpl: impl })
+  const provider = new AnthropicProvider({ id: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-test', fetchImpl: impl, promptCache: false })
 
   const stream = provider.stream(
     makeRequest({
@@ -160,6 +160,7 @@ test('tool definitions, api key and anthropic-version headers are sent', async (
     model: 'claude-test',
     apiKey: 'sk-ant-test',
     fetchImpl: impl,
+    promptCache: false,
   })
 
   const stream = provider.stream(
@@ -187,7 +188,7 @@ test('HTTP errors carry status, body and retry-after', async () => {
       text: async () => 'rate limited',
     } as unknown as Response
   }) as unknown as typeof fetch
-  const provider = new AnthropicProvider({ id: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-test', fetchImpl: impl })
+  const provider = new AnthropicProvider({ id: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-test', fetchImpl: impl, promptCache: false })
 
   const error = await provider.stream(makeRequest()).next().catch((e: unknown) => e)
   assert.ok(error instanceof Error)
@@ -196,6 +197,105 @@ test('HTTP errors carry status, body and retry-after', async () => {
   assert.equal(providerError.status, 429)
   assert.equal(providerError.retryAfterMs, 5000)
   assert.match(providerError.body ?? '', /rate limited/)
+})
+
+test('prompt cache is on by default: system, last tool and history prefix carry breakpoints', async () => {
+  const events = [
+    { type: 'message_start', message: { usage: {} } },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' } },
+    { type: 'message_stop' },
+  ]
+  const { impl, sent } = fakeFetch(events)
+  const provider = new AnthropicProvider({ id: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-test', fetchImpl: impl })
+
+  const stream = provider.stream(
+    makeRequest({
+      messages: [
+        { role: 'system', content: 'You are oarlock.' },
+        { role: 'user', content: 'Read the file.' },
+        { role: 'assistant', content: '', toolCalls: [{ id: 'toolu_1', name: 'read_file', arguments: '{"path":"a.ts"}' }] },
+        { role: 'tool', content: 'contents of a', toolCallId: 'toolu_1', toolName: 'read_file' },
+        { role: 'user', content: 'Now edit it.' },
+      ],
+      tools: [
+        { name: 'read_file', description: 'read', parameters: { type: 'object', properties: {} } },
+        { name: 'edit_file', description: 'edit', parameters: { type: 'object', properties: {} } },
+      ],
+    }),
+  )
+  for await (const _ of stream) { /* drain */ }
+
+  assert.ok(sent[0] !== undefined)
+  const req = sent[0]
+  assert.deepEqual(req.body['system'], [{ type: 'text', text: 'You are oarlock.', cache_control: { type: 'ephemeral' } }])
+
+  const tools = req.body['tools'] as ContentBlockShape[]
+  assert.equal(tools.length, 2)
+  assert.equal(tools[0]?.['cache_control'], undefined, 'only the last tool is a breakpoint')
+  assert.deepEqual(tools[1]?.['cache_control'], { type: 'ephemeral' })
+
+  const messages = req.body['messages'] as ContentBlockShape[][]
+  assert.equal(messages.length, 3)
+  assert.equal(messages[0]?.[0]?.['cache_control'], undefined, 'first turn stays fresh')
+  assert.deepEqual(messages[1]?.[0]?.['cache_control'], { type: 'ephemeral' }, 'prefix ends on the turn before the newest')
+  assert.equal(messages[2]?.[0]?.['cache_control'], undefined, 'newest turn stays fresh')
+  assert.equal(messages[2]?.[1]?.['cache_control'], undefined)
+})
+
+test('single-turn requests cache system and tools but leave the only turn fresh', async () => {
+  const events = [
+    { type: 'message_start', message: { usage: {} } },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' } },
+    { type: 'message_stop' },
+  ]
+  const { impl, sent } = fakeFetch(events)
+  const provider = new AnthropicProvider({ id: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-test', fetchImpl: impl })
+
+  const stream = provider.stream(
+    makeRequest({ tools: [{ name: 'read_file', description: 'read', parameters: { type: 'object', properties: {} } }] }),
+  )
+  for await (const _ of stream) { /* drain */ }
+
+  assert.ok(sent[0] !== undefined)
+  const req = sent[0]
+  assert.deepEqual(req.body['system'], [{ type: 'text', text: 'You are oarlock.', cache_control: { type: 'ephemeral' } }])
+  const tools = req.body['tools'] as ContentBlockShape[]
+  assert.deepEqual(tools[0]?.['cache_control'], { type: 'ephemeral' })
+  const messages = req.body['messages'] as ContentBlockShape[][]
+  assert.equal(messages.length, 1)
+  assert.equal(messages[0]?.[0]?.['cache_control'], undefined)
+})
+
+test('promptCache:false sends the plain wire shape with no breakpoints', async () => {
+  const events = [
+    { type: 'message_start', message: { usage: {} } },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' } },
+    { type: 'message_stop' },
+  ]
+  const { impl, sent } = fakeFetch(events)
+  const provider = new AnthropicProvider({ id: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-test', fetchImpl: impl, promptCache: false })
+
+  const stream = provider.stream(
+    makeRequest({
+      messages: [
+        { role: 'system', content: 'You are oarlock.' },
+        { role: 'user', content: 'Read the file.' },
+        { role: 'assistant', content: '', toolCalls: [{ id: 'toolu_1', name: 'read_file', arguments: '{"path":"a.ts"}' }] },
+        { role: 'tool', content: 'contents of a', toolCallId: 'toolu_1', toolName: 'read_file' },
+        { role: 'user', content: 'Now edit it.' },
+      ],
+      tools: [{ name: 'read_file', description: 'read', parameters: { type: 'object', properties: {} } }],
+    }),
+  )
+  for await (const _ of stream) { /* drain */ }
+
+  assert.ok(sent[0] !== undefined)
+  const req = sent[0]
+  assert.equal(req.body['system'], 'You are oarlock.')
+  const tools = req.body['tools'] as ContentBlockShape[]
+  assert.equal(tools[0]?.['cache_control'], undefined)
+  const messages = req.body['messages'] as ContentBlockShape[][]
+  for (const turn of messages) for (const block of turn) assert.equal(block['cache_control'], undefined)
 })
 
 type ContentBlockShape = Record<string, unknown>

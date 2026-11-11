@@ -12,7 +12,7 @@
 | 权限与沙箱 | 规则持久化、模式化 allow/deny、OS 级沙箱（Seatbelt/Landlock） | 规则已按工作目录持久化（设置可查可清）；bash 仍靠灾难命令黑名单，无 OS 隔离 |
 | 记忆与索引 | 跨会话 auto-memory、项目知识沉淀、repo wiki | 已实现跨会话记忆：`.agent/memory/*.md` 一条一个文件，摘要每轮注入系统提示词，`remember` 工具写入/删除，按条目记审批规则。仍无自动沉淀（只记模型主动写的）、无用户级/全局层、无仓库知识索引 |
 | 后台与并发 | 后台长任务、并行子 agent、任务间消息 | 同一轮多个委派并行执行（信号量限流，默认 3），子 agent 预设可声明在 `.agent/agents/*.md`；仍无后台长任务、任务间通信，bash 每次新进程无状态 |
-| 协议与缓存 | Anthropic/Gemini 原生适配、主动 prompt cache 布局 | 已实现 Anthropic 原生 Messages 线格式（`provider: 'anthropic'`，见 ⑧）；缓存靠网关自动命中；Gemini 与主动 cache_control 布局未做 |
+| 协议与缓存 | Anthropic/Gemini 原生适配、主动 prompt cache 布局 | 已实现 Anthropic 原生 Messages 线格式与 Gemini 原生 generateContent 线格式（`provider: 'anthropic' | 'gemini'`，见 ⑧⑨）；Anthropic 主动 `cache_control` 布局默认开启（系统/工具/历史前缀三处断点）；Gemini 显式 cachedContent 仍未做 |
 | 内置网络工具 | WebSearch/WebFetch/浏览器自动化一等工具 | `web_fetch` 已实现（Node 自带 fetch，流式截断 + 逐跳跳转校验 + SSRF 尽力守卫，见 ⑦）；WebSearch 仍缺——需要先定一个搜索后端 |
 
 「有但浅」的几处：压缩是启发式估算 + 摘要（先进做法保留文件状态做结构化微压缩）；bench 是 17 个合成任务，缺 SWE-bench 式真实仓库评测；无 IDE 集成、无 git 工作流（自动提交/PR）、无插件/技能生态。
@@ -93,11 +93,21 @@
 - 消息映射：系统提示抽到顶层 `system` 字段；`role: 'tool'` 折进用户轮的 `tool_result` 块，相邻工具结果与下一条用户文本合并到同一个 user turn（否则相邻 tool_result 会被拆成多个 user 消息）；assistant 的 tool_calls 映射成 `tool_use` 块；tool 参数的 JSON 字符串在发线前 parse 成对象（发不出坏请求）。
 - 流式事件：`message_start` / `content_block_start` / `content_block_delta`（text_delta / thinking_delta / input_json_delta）/ `content_block_stop` / `message_delta` / `message_stop`；工具调用在 input_json_delta 累积完后一次发出，`stop_reason` 映射到既有 `FinishReason`（end_turn→stop、tool_use→tool_calls、max_tokens→length）。
 - usage：`input_tokens` / `output_tokens` / `cache_read_input_tokens` 映射到 `Usage`，usage 在 message_start 和 message_delta 两处取（后者覆盖 output）。
-- 配置：`ProviderKind` 加 `'anthropic'`，默认 `https://api.anthropic.com/v1` + `claude-sonnet-4-5`；`ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` 环境变量与 settings 走同一条 `.agent/keys.json` 端点键。Gemini 原生线与主动 cache_control 布局有意未做。
+- 配置：`ProviderKind` 加 `'anthropic'`，默认 `https://api.anthropic.com/v1` + `claude-sonnet-4-5`；`ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` 环境变量与 settings 走同一条 `.agent/keys.json` 端点键。Gemini 原生线与主动 cache_control 布局见 ⑨。
+
+### ⑨ Gemini 原生协议 + 主动 prompt cache 布局（已完成）
+
+provider 家族的另一半：补上 Gemini 原生线，并把 Anthropic 的 prompt cache 从「靠网关自动命中」升级为「主动布置断点」。
+
+- `providers/gemini.ts`：`GeminiProvider`，走 `/models/{model}:streamGenerateContent?alt=sse`、SSE 流式、`x-goog-api-key` 头；`createProvider` 在 `config.provider === 'gemini'` 时路由过来。baseUrl 已带 `/models` 后缀时不重复拼接，`request.model` 覆盖默认模型（子 agent 分层复用同一网关）。
+- 消息映射：系统提示抽到 `systemInstruction`；`role: 'assistant'` → `model`，tool_calls → `functionCall` part；`role: 'tool'` → 用户轮里的 `functionResponse` part，相邻工具结果与下一条用户文本合并到同一个 user turn（与 Anthropic 同一套 userAcc 累积逻辑）；图片 → `inlineData`。工具定义包成 `tools: [{ functionDeclarations: [...] }]`。
+- 流式事件：逐 chunk 读 `candidates[0].content.parts`，`text` part 按 `thought` 标志分流到 reasoning-delta / text-delta，`functionCall` part 收集成 tool-call（Gemini 一次给完整 args，不像 Anthropic 增量拼 JSON）；`finishReason` STOP→stop、MAX_TOKENS→length，有工具调用时收口为 tool_calls。usage 从 `usageMetadata` 映射（含 `cachedContentTokenCount` / `thoughtsTokenCount`）。
+- 配置：`ProviderKind` 加 `'gemini'`，默认 `https://generativelanguage.googleapis.com/v1beta` + `gemini-2.5-flash`；`GEMINI_API_KEY`（回退 `GOOGLE_API_KEY`）/ `GEMINI_BASE_URL` 环境变量，密钥仍走 `.agent/keys.json` 端点键。
+- **Anthropic 主动 cache 布局**：`AnthropicProvider` 默认在稳定前缀布 `cache_control: { type: 'ephemeral' }` 断点——最后一个工具定义、系统块（系统提示因此从字符串变成单 text 块）、以及最新一轮之前那一轮的末块（历史前缀）。三处断点（Anthropic 上限四个），只留最新一轮新鲜；前缀断点随每步前移，旧缓存仍按最长匹配前缀命中。低于模型最小可缓存长度的断点被 API 静默忽略，短提示也安全。`promptCache: false` 可退回纯线格式（映射测试即走这条）。Gemini 的显式 `cachedContent`（需先建缓存资源）有意未做。
 
 ### 暂不排期
 
-剩下的差距工程量都不小，各自单独立项。按通用定位排序（谁离「任何任务都用得上」更近谁在前）：后台长任务与任务间通信、内置网络工具里的 WebSearch / 浏览器自动化（`web_fetch` 已在 ⑦ 落地）在前；OS 沙箱随后；原生 Anthropic 已在 ⑧ 落地，Gemini 原生线与主动 prompt cache 布局是同一个 provider 家族的另一半；纯编码场景专属的代码智能（LSP / tree-sitter / 仓库索引）与 IDE 集成排在最后——对写代码收益大，但不扩展 runtime 的通用能力边界。记忆里还差的两步——自动沉淀与用户级作用域——属通用能力，等真实用过一段再决定；跨会话记忆与预设目录的 Web 管理入口同理。
+剩下的差距工程量都不小，各自单独立项。按通用定位排序（谁离「任何任务都用得上」更近谁在前）：后台长任务与任务间通信、内置网络工具里的 WebSearch / 浏览器自动化（`web_fetch` 已在 ⑦ 落地）在前；OS 沙箱随后；provider 家族的原生 Anthropic / Gemini 与主动 prompt cache 布局已在 ⑧⑨ 落地（Gemini 显式 cachedContent 留待按需）；纯编码场景专属的代码智能（LSP / tree-sitter / 仓库索引）与 IDE 集成排在最后——对写代码收益大，但不扩展 runtime 的通用能力边界。记忆里还差的两步——自动沉淀与用户级作用域——属通用能力，等真实用过一段再决定；跨会话记忆与预设目录的 Web 管理入口同理。
 
 ## 设计约束（沿用）
 
